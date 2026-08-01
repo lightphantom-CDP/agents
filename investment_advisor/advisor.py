@@ -41,6 +41,21 @@ def _default_snapshot_provider(symbol: str, name: str) -> data.AssetSnapshot:
     return data.get_snapshot(symbol, name=name)
 
 
+def _infer_market_state(now_utc: datetime) -> str:
+    """Rough US-market open/closed hint when the feed does not supply one.
+
+    Approximates NYSE regular hours (13:30-20:00 UTC on weekdays) and ignores
+    market holidays. The authoritative freshness signal is always the
+    ``Data as of`` timestamp shown in the report.
+    """
+    if now_utc.weekday() >= 5:
+        return "CLOSED (weekend)"
+    minutes = now_utc.hour * 60 + now_utc.minute
+    if 13 * 60 + 30 <= minutes < 20 * 60:
+        return "OPEN (approx)"
+    return "CLOSED (approx)"
+
+
 def build_report(
     assets: tuple[config.Asset, ...] = config.DEFAULT_ASSETS,
     *,
@@ -78,6 +93,10 @@ def build_report(
         if snapshot.market_time and (data_asof is None or snapshot.market_time > data_asof):
             data_asof = snapshot.market_time
 
+    generated_at = datetime.now(tz=timezone.utc)
+    if market_state == "UNKNOWN":
+        market_state = _infer_market_state(generated_at)
+
     goal = planner.goal_analysis(
         start_usd=cash_usd,
         target_idr=target_idr,
@@ -88,7 +107,7 @@ def build_report(
     allocation = planner.suggest_allocation(cash_usd, scores, assets, tranches)
 
     return Report(
-        generated_at=datetime.now(tz=timezone.utc),
+        generated_at=generated_at,
         scores=scores,
         goal=goal,
         allocation=allocation,

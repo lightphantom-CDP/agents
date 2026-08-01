@@ -162,7 +162,7 @@ def render_text(report: Report) -> str:
             lines.append(f"    Lump-sum only: {proj}")
             lines.append(
                 f"    To actually reach the goal at {_pct(h.planning_return, 0)}/yr, save "
-                f"~{_fmt_usd(h.required_monthly_usd)}/month"
+                f"~${h.required_monthly_usd:,.0f}/month"
             )
 
     alloc = report.allocation
@@ -229,7 +229,7 @@ def render_markdown(report: Report) -> str:
         for h in goal.horizons:
             md.append(
                 f"| {h.years:g} years | {_pct(h.required_cagr, 0)} | "
-                f"{_fmt_usd(h.required_monthly_usd)}/mo |"
+                f"${h.required_monthly_usd:,.0f}/mo |"
             )
 
     alloc = report.allocation

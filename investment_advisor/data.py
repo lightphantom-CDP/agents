@@ -131,9 +131,12 @@ def parse_chart(payload: dict, *, name: str | None = None) -> AssetSnapshot:
         name=name or meta.get("shortName") or meta.get("longName") or symbol,
         currency=meta.get("currency", "USD"),
         price=float(price),
-        previous_close=_coerce_float(meta.get("chartPreviousClose"))
-        or _coerce_float(meta.get("previousClose"))
-        or (raw_closes[-2] if len(raw_closes) >= 2 else None),
+        # Prefer the true prior close, then the prior daily bar. Only fall back
+        # to chartPreviousClose (the pre-window close, which for a 1y range is
+        # ~a year old) as a last resort.
+        previous_close=_coerce_float(meta.get("previousClose"))
+        or (raw_closes[-2] if len(raw_closes) >= 2 else None)
+        or _coerce_float(meta.get("chartPreviousClose")),
         market_time=market_time,
         market_state=meta.get("marketState", "UNKNOWN"),
         fifty_two_week_high=_coerce_float(meta.get("fiftyTwoWeekHigh"))
