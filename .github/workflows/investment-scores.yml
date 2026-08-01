@@ -1,0 +1,65 @@
+name: Hourly investment scores
+
+# Checks the watchlist every hour and publishes buy scores + a DCA plan to the
+# run's job summary, plus a JSON snapshot as an artifact. Read-only, no secrets,
+# no commits. Market data comes from Yahoo Finance's public endpoint.
+#
+# Note: GitHub only runs `schedule` triggers from the repository's DEFAULT
+# branch, and disables scheduled workflows in forks / after long inactivity.
+# You can always run it on demand via "Run workflow" (workflow_dispatch).
+
+on:
+  schedule:
+    - cron: "0 * * * *" # top of every hour (UTC)
+  workflow_dispatch:
+    inputs:
+      cash:
+        description: "Available cash in USD"
+        default: "4000"
+      target_idr:
+        description: "Savings goal in IDR"
+        default: "1000000000"
+      tickers:
+        description: "Comma-separated watchlist"
+        default: "SPY,NVDA,AMZN,META"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: investment-scores
+  cancel-in-progress: false
+
+jobs:
+  scores:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compute scores
+        # Inputs are passed through env (never interpolated into the shell) to
+        # avoid script injection. Defaults apply on the scheduled run.
+        env:
+          CASH: ${{ github.event.inputs.cash || '4000' }}
+          TARGET_IDR: ${{ github.event.inputs.target_idr || '1000000000' }}
+          TICKERS: ${{ github.event.inputs.tickers || 'SPY,NVDA,AMZN,META' }}
+        run: |
+          python -m investment_advisor \
+            --cash "$CASH" --target-idr "$TARGET_IDR" --tickers "$TICKERS" \
+            --format markdown | tee -a "$GITHUB_STEP_SUMMARY"
+          python -m investment_advisor \
+            --cash "$CASH" --target-idr "$TARGET_IDR" --tickers "$TICKERS" \
+            --format json --save scores.json
+
+      - name: Upload JSON snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: investment-scores-${{ github.run_id }}
+          path: scores.json
+          if-no-files-found: warn
