@@ -1,0 +1,5 @@
+# InvestRadar dependencies.
+# The only third-party requirement is 'requests'; everything else is the
+# Python standard library. (This package is already covered by the repo's
+# top-level pyproject.toml / requirements.txt.)
+requests>=2.32.3
