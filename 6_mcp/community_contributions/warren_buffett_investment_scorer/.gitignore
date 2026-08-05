@@ -1,0 +1,8 @@
+# Generated hourly reports and logs
+reports/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
