@@ -1,52 +1,64 @@
-# Workshop dataset — Give Me Some Credit
+# Workshop dataset — Give Me Some Credit format
 
-## Source
+## Included file
 
-Download from Kaggle: [Give Me Some Credit](https://www.kaggle.com/c/GiveMeSomeCredit/data)
+| File | Rows | Size | Description |
+|------|------|------|-------------|
+| **`cs-training.csv`** | 40,000 | ~2 MB | Medium synthetic credit dataset |
 
-Primary file: `cs-training.csv` (~150k rows)
+**Why 40,000 rows?**
+- Large enough for meaningful ML metrics (AUC, risk bands)
+- Small enough for fast CDE jobs in a workshop (~2–5 min ingest)
+- Full Kaggle dataset has ~150k rows (~8 MB) — fine for production, slow for demos
 
-## Columns (original)
+## Schema (matches Kaggle Give Me Some Credit)
 
-| Column | Description |
-|--------|-------------|
-| `Id` | Applicant identifier |
-| `SeriousDlqin2yrs` | **Label** — 1 if 90+ DPD in 2 years, else 0 |
-| `RevolvingUtilizationOfUnsecuredLines` | Credit utilization ratio |
-| `age` | Age in years |
-| `NumberOfTime30-59DaysPastDueNotWorse` | 30–59 DPD count |
-| `DebtRatio` | Monthly debt / monthly income |
-| `MonthlyIncome` | Monthly income (nullable) |
-| `NumberOfOpenCreditLinesAndLoans` | Open credit lines |
-| `NumberOfTimes90DaysLate` | 90+ DPD count |
-| `NumberRealEstateLoansOrLines` | Real estate loans |
-| `NumberOfTime60-89DaysPastDueNotWorse` | 60–89 DPD count |
-| `NumberOfDependents` | Dependents (nullable) |
+Same column names as the original so all workshop scripts work unchanged:
 
-## Facilitator setup — upload to data lake
-
-Replace placeholders with your environment values:
-
-```bash
-# Example: AWS S3 landing zone
-export WORKSHOP_BUCKET=s3a://your-datalake-bucket/workshop/credit_scoring
-aws s3 cp cs-training.csv ${WORKSHOP_BUCKET}/landing/cs-training.csv
-
-# Or upload via CDP Data Hub / cloud console to:
-#   s3a://<bucket>/workshop/credit_scoring/landing/cs-training.csv
+```
+Id, SeriousDlqin2yrs, RevolvingUtilizationOfUnsecuredLines, age,
+NumberOfTime30-59DaysPastDueNotWorse, DebtRatio, MonthlyIncome,
+NumberOfOpenCreditLinesAndLoans, NumberOfTimes90DaysLate,
+NumberRealEstateLoansOrLines, NumberOfTime60-89DaysPastDueNotWorse,
+NumberOfDependents
 ```
 
-## Workshop table naming convention
+- **Label:** `SeriousDlqin2yrs` (1 = default, 0 = no default)
+- **Missing values:** `MonthlyIncome`, `NumberOfDependents` (~18% / ~3% null)
+- **Default rate:** ~6–8% (realistic for credit risk)
 
-All tables use database `workshop_credit` (create in your catalog):
+## How to use in CDE
 
-| Table | Purpose |
-|-------|---------|
-| `workshop_credit.raw_applications` | Raw CSV as ingested |
-| `workshop_credit.features` | Engineered features + label |
-| `workshop_credit.scores` | Model output |
-| `workshop_credit.quality_log` | Data quality run results |
+### Option A — Upload to data lake (recommended)
 
-## Synthetic data (fallback)
+```bash
+aws s3 cp cs-training.csv s3://<your-bucket>/workshop/credit_scoring/landing/cs-training.csv
+```
 
-If Kaggle is unavailable, generate a small synthetic dataset in CDE Lab 1 using the provided `generate_synthetic_data()` function in `labs/01_ingest_raw.py`.
+CDE ingest job parameter:
+```
+--db workshop_credit --landing s3a://<your-bucket>/workshop/credit_scoring/landing
+```
+
+### Option B — Upload to CDE Resources
+
+1. CDE → Resources → Upload `cs-training.csv`
+2. Point ingest job to the resource path (environment-specific)
+
+## Regenerate different sizes
+
+```bash
+cd workshops/credit_scoring_cde_cai/data
+python3 generate_sample_data.py --rows 20000   # smaller (~1 MB)
+python3 generate_sample_data.py --rows 40000   # medium (default)
+python3 generate_sample_data.py --rows 80000   # larger (~4 MB)
+```
+
+## Alternative sizes
+
+| Rows | Size | Best for |
+|------|------|----------|
+| 10,000 | ~0.5 MB | Quick smoke test |
+| **40,000** | **~2 MB** | **Workshop default** |
+| 80,000 | ~4 MB | Larger audience / performance demo |
+| 150,000 | ~8 MB | Kaggle original scale |
