@@ -2,142 +2,196 @@
 
 Detailed step-by-step instructions for every lab. Work in order.
 
-**Before you start:** Replace these placeholders everywhere:
-
-| Placeholder | Your value (example) |
-|-------------|----------------------|
-| `<CDE_VC_NAME>` | `workshop-vc-01` |
-| `<CAI_PROJECT>` | `credit-scoring-workshop` |
-| `<WORKSHOP_DB>` | `workshop_credit` |
-| `<LANDING_PATH>` | `s3a://datalake/workshop/credit_scoring/landing` |
-| `<YOUR_USER>` | your CDP username |
+**Mode:** **Jobs-only** — CDE Sessions are not required (use CDE Jobs + CAI Workbench).  
+**Airflow:** Skipped in this workshop — run jobs manually in sequence.
 
 ---
 
-## Lab 0 — Validate your environment
+## Workshop environment values
 
-**Goal:** Confirm CDE and CAI can read/write the same Iceberg catalog.
+| Setting | Value |
+|---------|-------|
+| **S3 bucket** | `s3://workshpcloud-buk-5e3a7882` |
+| **Landing path (Spark)** | `s3a://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing` |
+| **CSV file** | `s3://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing/cs-training.csv` |
+| **Database** | `workshop_credit` |
+| **CDE cluster** | `workshopcluster` (or name provided by facilitator) |
+| **CAI project** | `credit-scoring-workshop` (or name provided by facilitator) |
 
-**Time:** 30 minutes
+**Important:** In CDE Spark job arguments, always use **`s3a://`** (not `s3://`).
+
+---
+
+## Iceberg tables created in this workshop
+
+| Table | Created by | Purpose |
+|-------|------------|---------|
+| `workshop_credit.connectivity_test` | `credit-00-validate` (optional) | Smoke test only |
+| `workshop_credit.raw_applications` | `credit-01-ingest-raw` | Raw credit data from CSV |
+| `workshop_credit.features` | `credit-02-build-features` | Model-ready features |
+| `workshop_credit.scores` | `credit-04-batch-score` | Model predictions |
+
+---
+
+## Job sequence overview
+
+```
+Upload CSV to S3
+       ↓
+credit-00-validate        (optional)
+       ↓
+credit-01-ingest-raw      → Iceberg: raw_applications
+       ↓
+credit-02-build-features  → Iceberg: features
+       ↓
+CAI: train + deploy model
+       ↓
+credit-04-batch-score     → Iceberg: scores
+```
+
+---
+
+## Lab 0 — Validate your environment (Jobs-only)
+
+**Goal:** Confirm CDE can run Spark jobs and create Iceberg tables.
+
+**Time:** 20 minutes
 
 ### Step 0.1 — Log in to CDP
 
-1. Open your CDP console URL (provided by facilitator).
+1. Open your CDP console URL.
 2. Confirm you see **Data Engineering** and **Machine Learning / AI** in the left menu.
-3. Note your environment name: ___________________
 
-### Step 0.2 — Open CDE
+### Step 0.2 — Upload CSV to S3 (facilitator may do this once for all)
 
-1. Go to **Data Engineering** → **Overview**.
-2. Click your virtual cluster: `<CDE_VC_NAME>`.
-3. Click **Create Session** (or use facilitator-provided session).
-4. Name: `lab0-<YOUR_USER>`
-5. Wait until status = **Running**.
+Upload `cs-training.csv` (~40,000 rows) to:
 
-### Step 0.3 — Test Spark + Iceberg in CDE
-
-In the CDE Session editor, run:
-
-```python
-spark.sql(f"CREATE DATABASE IF NOT EXISTS <WORKSHOP_DB>")
-spark.sql(f"""
-CREATE TABLE IF NOT EXISTS <WORKSHOP_DB>.connectivity_test (
-  user_name STRING,
-  tested_at TIMESTAMP
-) USING iceberg
-""")
-spark.sql(f"""
-INSERT INTO <WORKSHOP_DB>.connectivity_test
-VALUES ('<YOUR_USER>', current_timestamp())
-""")
-spark.table("<WORKSHOP_DB>.connectivity_test").show()
+```
+s3://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing/cs-training.csv
 ```
 
-**Expected:** One row with your username and a timestamp.
+**AWS CLI example:**
+```bash
+aws s3 cp cs-training.csv s3://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing/cs-training.csv
+```
+
+Verify in S3 console that the file exists.
+
+### Step 0.3 — Optional: validate CDE + Iceberg (CDE Job)
+
+If you **do not** have CDE Sessions, use job `credit-00-validate` instead.
+
+1. CDE → **Jobs** → **Create Job**
+2. Fill in:
+
+| Field | Value |
+|-------|-------|
+| Job Type | **Spark** |
+| Name | `credit-00-validate` |
+| Application Files | Upload `labs/00_validate_cde.py` |
+| Main Class | *(leave empty for Python)* |
+| Arguments | `--db workshop_credit` |
+
+3. Click **Create** → **Run**
+4. Open **Job Runs** → logs should show:
+
+```
+SUCCESS: CDE + Iceberg working
+```
+
+**Skip this job** if you prefer — go straight to Lab 1 ingest.
 
 ### Step 0.4 — Open CAI Workbench
 
-1. Go to **Machine Learning** (Cloudera AI).
-2. Open project: `<CAI_PROJECT>`.
-3. **New Session** → Runtime: Python 3.10 → Start.
-4. If Spark is enabled, run the same `spark.table(...).show()` query.
-
-**Expected:** Same row visible from CAI.
+1. Go to **Cloudera AI** → project `credit-scoring-workshop`
+2. **New Session** → Python 3.10 → Start
+3. Confirm you can open the editor (used starting in Lab 4)
 
 ### Step 0.5 — Checklist
 
-- [ ] CDE session runs without error
-- [ ] CAI session runs without error
-- [ ] Both see `connectivity_test` table
-- [ ] You can open JupyterLab / Workbench editor
+- [ ] CSV exists in S3 landing path
+- [ ] CDE job runs successfully (validate or ingest)
+- [ ] CAI session starts
+- [ ] You can open **Jobs** and **Job Runs** in CDE
 
-✅ **Lab 0 complete.** Tell facilitator if any step fails.
+✅ **Lab 0 complete.**
 
 ---
 
-## Lab 1 — Ingest raw credit data (CDE)
+## Lab 1 — Ingest raw credit data (CDE Job)
 
-**Goal:** Load the Give Me Some Credit CSV into Iceberg table `raw_applications`.
+**Goal:** Load CSV from S3 into Iceberg table `workshop_credit.raw_applications`.
 
 **Time:** 45 minutes
 
-### Step 1.1 — Verify landing data
+### Step 1.1 — Confirm landing data in S3
 
-Ask facilitator for landing path. In CDE Session:
+File must exist at:
 
-```python
-# List files (adjust path)
-df = spark.read.csv("<LANDING_PATH>/cs-training.csv", header=True, inferSchema=True)
-print(f"Rows: {df.count()}, Columns: {len(df.columns)}")
-df.printSchema()
-df.show(5)
+```
+s3://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing/cs-training.csv
 ```
 
-**Expected:** ~150,000 rows, 12 columns, label column `SeriousDlqin2yrs`.
+Expected: **~40,000 rows**, 12 columns, label column `SeriousDlqin2yrs`.
 
 ### Step 1.2 — Create CDE Job for ingest
 
-1. In CDE UI → **Jobs** → **Create Job**.
-2. Settings:
-   - **Name:** `credit-01-ingest-raw`
-   - **Type:** Spark
-   - **Script:** Upload `labs/01_ingest_raw.py`
-   - **Parameters:** `--db <WORKSHOP_DB> --landing <LANDING_PATH>`
-3. **Resources:** 2 executors, 4g memory (facilitator may adjust).
-4. Click **Create**.
+1. CDE → **Jobs** → **Create Job**
+2. Fill in:
+
+| Field | Value |
+|-------|-------|
+| Job Type | **Spark** |
+| Name | `credit-01-ingest-raw` |
+| Application Files | Upload `labs/01_ingest_raw.py` |
+| Main Class | *(leave empty for Python)* |
+| Arguments | `--db workshop_credit` |
+| Arguments | `--landing s3a://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing` |
+
+3. **Resources:** 2 executors, 4g memory (facilitator may adjust)
+4. Click **Create**
 
 ### Step 1.3 — Run the job
 
-1. Click **Run** on job `credit-01-ingest-raw`.
-2. Open **Run Details** → watch logs.
-3. Wait for status **Succeeded**.
+1. Click **Run** on `credit-01-ingest-raw`
+2. Open **Job Runs** → select run → **Logs**
+3. Wait for status **Succeeded**
 
-### Step 1.4 — Validate in CDE Session
+**Look for in logs:**
+```
+SUCCESS: wrote 40000 rows to workshop_credit.raw_applications
+```
+
+### Step 1.4 — Validate (Job logs or CAI)
+
+**Option A — Job logs:** confirm row count in success message above.
+
+**Option B — CAI Workbench** (after Lab 2, or if Spark enabled now):
 
 ```python
-raw = spark.table("<WORKSHOP_DB>.raw_applications")
+raw = spark.table("workshop_credit.raw_applications")
 print("Count:", raw.count())
 raw.groupBy("default_flag").count().show()
 raw.printSchema()
 ```
 
 **Expected:**
-- Row count matches source CSV
-- `default_flag` has values 0 and 1
+- ~40,000 rows
+- `default_flag` values 0 and 1
 - `ingested_at` column populated
 
 ### Step 1.5 — Discussion questions
 
 1. Why store raw data in Iceberg instead of keeping only CSV?
-2. What governance policies (Ranger) should apply to PII columns?
+2. What governance policies (Ranger) should apply to applicant data?
 
 ✅ **Lab 1 complete.**
 
 ---
 
-## Lab 2 — Feature engineering (CDE)
+## Lab 2 — Feature engineering (CDE Job)
 
-**Goal:** Transform raw data into model-ready features in `features` table.
+**Goal:** Transform raw data into model-ready features in `workshop_credit.features`.
 
 **Time:** 60 minutes
 
@@ -154,208 +208,125 @@ Open `labs/02_build_features.py`. Key transformations:
 | `open_credit_lines` | Direct from source |
 | `income_missing` | 1 if MonthlyIncome is null |
 | `monthly_income` | Impute median when null |
-| `default_flag` | Renamed label for modeling |
+| `high_utilization_flag` | 1 if utilization > 0.75 |
+| `default_flag` | Label for modeling |
 
-### Step 2.2 — Run feature job in CDE Session (dev test)
-
-Paste the core logic from `02_build_features.py` into your session and run on a sample:
-
-```python
-raw = spark.table("<WORKSHOP_DB>.raw_applications")
-sample = raw.limit(1000)
-# ... paste feature transforms from lab script ...
-sample.select("applicant_id", "utilization", "default_flag").show(10)
-```
-
-Fix any errors before creating the production job.
-
-### Step 2.3 — Create CDE Job
+### Step 2.2 — Create CDE Job
 
 1. **Jobs** → **Create Job**
-2. **Name:** `credit-02-build-features`
-3. **Script:** `labs/02_build_features.py`
-4. **Parameters:** `--db <WORKSHOP_DB>`
-5. **Run** the job.
+2. Fill in:
 
-### Step 2.4 — Validate features
+| Field | Value |
+|-------|-------|
+| Job Type | **Spark** |
+| Name | `credit-02-build-features` |
+| Application Files | Upload `labs/02_build_features.py` |
+| Main Class | *(leave empty for Python)* |
+| Arguments | `--db workshop_credit` |
+
+3. Click **Create** → **Run**
+
+### Step 2.3 — Validate in job logs
+
+**Look for:**
+```
+SUCCESS: wrote 40000 rows to workshop_credit.features
+LATEST_SNAPSHOT_ID=<number>
+```
+
+**Save the snapshot ID** — you will log it in MLflow during Lab 4.
+
+### Step 2.4 — Validate in CAI (optional)
 
 ```python
-feat = spark.table("<WORKSHOP_DB>.features")
+feat = spark.table("workshop_credit.features")
 feat.printSchema()
-feat.describe("utilization", "debt_ratio", "age", "delinq_total").show()
 feat.groupBy("default_flag").count().show()
 ```
 
-**Expected:** ~6–7% positive class (defaults) — typical for this dataset.
+**Expected:** ~4–7% positive class (defaults).
 
 ### Step 2.5 — Hands-on challenge (optional)
 
-In `02_build_features.py`, add a new feature:
+Add to `02_build_features.py` if not already present:
 
 ```python
 .withColumn("high_utilization_flag", F.when(F.col("utilization") > 0.75, 1).otherwise(0))
 ```
 
-Re-run job and confirm column exists.
-
-### Step 2.6 — Log Iceberg snapshot ID
-
-```python
-snap = spark.sql(f"SELECT snapshot_id, committed_at FROM <WORKSHOP_DB>.features.snapshots ORDER BY committed_at DESC LIMIT 1")
-snap.show(truncate=False)
-```
-
-**Save this snapshot ID** — you will log it in MLflow during Lab 4.
+Re-upload script, re-run job, confirm column exists.
 
 ✅ **Lab 2 complete.**
 
 ---
 
-## Lab 3 — Orchestrate with Airflow (CDE)
-
-**Goal:** Chain ingest → quality checks → features in one DAG.
-
-**Time:** 45 minutes
-
-### Step 3.1 — Review data quality job
-
-Open `labs/03_data_quality.py`. It checks:
-
-- No null `applicant_id`
-- `default_flag` in (0, 1)
-- Row count > 100,000
-- Default rate between 1% and 20%
-
-Failures write to `quality_log` and raise an error to stop the DAG.
-
-### Step 3.2 — Upload Airflow DAG
-
-1. In CDE → **Airflow** → **DAGs**.
-2. Upload `labs/airflow_credit_scoring_dag.py` as a resource (or use facilitator pre-deployed DAG).
-3. Set Airflow Variables (facilitator provides):
-   - `workshop_db` = `<WORKSHOP_DB>`
-   - `landing_path` = `<LANDING_PATH>`
-   - `cde_vc_name` = `<CDE_VC_NAME>`
-
-### Step 3.3 — DAG structure
-
-```
-ingest_raw → data_quality → build_features → [end]
-```
-
-### Step 3.4 — Trigger the DAG
-
-1. Enable DAG: `credit_scoring_pipeline`
-2. Click **Trigger DAG** (play button).
-3. Open **Graph** view and watch task colors turn green.
-
-### Step 3.5 — Verify pipeline output
-
-```python
-spark.sql(f"SELECT * FROM <WORKSHOP_DB>.quality_log ORDER BY checked_at DESC LIMIT 5").show(truncate=False)
-spark.table("<WORKSHOP_DB>.features").count()
-```
-
-### Step 3.6 — Discussion
-
-- How would you schedule this nightly?
-- Where would you add email alerts on `data_quality` failure?
-
-✅ **Lab 3 complete.**
-
----
-
-## Lab 4 — Train a credit model (CAI)
+## Lab 3 — Train a credit model (CAI)
 
 **Goal:** Train XGBoost classifier, track with MLflow, register best model.
 
 **Time:** 75 minutes
 
-### Step 4.1 — Open CAI and create session
+### Step 3.1 — Open CAI and create session
 
-1. **Cloudera AI** → Project `<CAI_PROJECT>`
-2. Upload `labs/cai/04_train_credit_model.py` to project files (or open provided notebook).
-3. **New Session** — enable Spark if reading Iceberg via Spark connection.
-4. Install runtime dependency if needed:
+1. **Cloudera AI** → project `credit-scoring-workshop`
+2. Upload `labs/cai/04_train_credit_model.py` to project files
+3. **New Session** — enable Spark if reading Iceberg via Spark connection
+4. Install dependencies if needed:
    ```bash
    pip install xgboost scikit-learn
    ```
 
-### Step 4.2 — Connect to feature table
+### Step 3.2 — Update config in training script
 
-In CAI Workbench, run the data load section from `04_train_credit_model.py`:
-
-```python
-# Via Spark (recommended)
-features_df = spark.table("<WORKSHOP_DB>.features").toPandas()
-```
-
-Or use CAI Data Connection configured by facilitator.
-
-### Step 4.3 — Train / validation split
-
-**Important:** Use random split for workshop speed. In production, use **time-based split**.
+Edit these lines in `04_train_credit_model.py`:
 
 ```python
-from sklearn.model_selection import train_test_split
-
-FEATURE_COLS = [
-    "utilization", "age", "debt_ratio", "delinq_total",
-    "open_credit_lines", "real_estate_loans", "dependents",
-    "income_missing", "monthly_income", "high_utilization_flag",
-]
-X = features_df[FEATURE_COLS]
-y = features_df["default_flag"]
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+WORKSHOP_DB = "workshop_credit"
+FEATURES_SNAPSHOT_ID = "<paste from Lab 2 job logs>"
 ```
 
-### Step 4.4 — Train with MLflow
-
-Run the training block in `04_train_credit_model.py`.
-
-**Expected MLflow metrics:**
-- `auc` ≈ 0.85–0.87
-- `ks` ≈ 0.35–0.45
-- `gini` ≈ 0.70–0.74
-
-### Step 4.5 — Log Iceberg snapshot ID
+### Step 3.3 — Load feature table
 
 ```python
-import mlflow
-mlflow.log_param("features_snapshot_id", "<SNAPSHOT_ID_FROM_LAB_2>")
-mlflow.log_param("features_table", "<WORKSHOP_DB>.features")
+features_df = spark.table("workshop_credit.features").toPandas()
+print(features_df.shape)
+features_df["default_flag"].value_counts()
 ```
 
-### Step 4.6 — Compare runs
+### Step 3.4 — Train with MLflow
 
-1. CAI → **Experiments** → open experiment `credit_default_prediction`
+Run the full training script (trains 3 models with different `max_depth`).
+
+**Expected MLflow metrics (approximate):**
+- `auc` ≈ 0.80–0.87
+- `ks` ≈ 0.30–0.45
+- `gini` ≈ 0.60–0.74
+
+### Step 3.5 — Register best model
+
+1. CAI → **Experiments** → `credit_default_prediction`
 2. Sort by `auc` descending
-3. Select best run → **Register Model** → name: `credit_default_model`
+3. Best run → **Register Model** → name: `credit_default_model`
 
-### Step 4.7 — Hands-on challenge
-
-Change `max_depth` from 4 to 6, re-run training, compare AUC in MLflow.
-
-✅ **Lab 4 complete.**
+✅ **Lab 3 complete.**
 
 ---
 
-## Lab 5 — Deploy model (CAI)
+## Lab 4 — Deploy model (CAI)
 
 **Goal:** Deploy registered model as REST API and score one applicant.
 
 **Time:** 45 minutes
 
-### Step 5.1 — Promote model version
+### Step 4.1 — Deploy model
 
 1. **Model Registry** → `credit_default_model`
-2. Select best version → **Deploy** → **New Model Deployment**
-3. Name: `credit-scoring-api`
-4. Wait until status = **Deployed**
+2. Best version → **Deploy** → name: `credit-scoring-api`
+3. Wait until status = **Deployed**
 
-### Step 5.2 — Test with curl
+### Step 4.2 — Test with curl
 
-Facilitator provides API URL and auth token.
+Replace `<CAI_MODEL_URL>` and `<TOKEN>` (facilitator provides):
 
 ```bash
 curl -X POST "https://<CAI_MODEL_URL>/model/credit-scoring-api/infer" \
@@ -366,13 +337,9 @@ curl -X POST "https://<CAI_MODEL_URL>/model/credit-scoring-api/infer" \
   }'
 ```
 
-**Expected response:** probability of default (float 0–1).
+**Expected:** probability of default (float 0–1).
 
-### Step 5.3 — Test from Python
-
-Run `labs/cai/05_deploy_and_test.py` in CAI session.
-
-### Step 5.4 — Risk bands
+### Step 4.3 — Risk bands
 
 | Probability | Band |
 |-------------|------|
@@ -381,59 +348,54 @@ Run `labs/cai/05_deploy_and_test.py` in CAI session.
 | 0.20 – 0.35 | C — High |
 | ≥ 0.35 | D — Very high |
 
-✅ **Lab 5 complete.**
+✅ **Lab 4 complete.**
 
 ---
 
-## Lab 6 — Batch scoring (CDE)
+## Lab 5 — Batch scoring (CDE Job)
 
 **Goal:** Score all applicants via CDE job calling CAI model API.
 
 **Time:** 60 minutes
 
-### Step 6.1 — Configure job parameters
+### Step 5.1 — Create CDE Job
 
-Create CDE job `credit-04-batch-score` with script `labs/04_batch_score.py`.
+1. **Jobs** → **Create Job**
+2. Fill in:
 
-**Environment variables / parameters:**
+| Field | Value |
+|-------|-------|
+| Job Type | **Spark** |
+| Name | `credit-04-batch-score` |
+| Application Files | Upload `labs/04_batch_score.py` |
+| Main Class | *(leave empty for Python)* |
+| Arguments | `--db workshop_credit` |
+| Arguments | `--model-url https://<CAI_MODEL_URL>/model/credit-scoring-api/infer` |
+| Arguments | `--model-name credit_default_model` |
+| Arguments | `--model-version 1` |
 
-| Parameter | Value |
-|-----------|-------|
-| `--db` | `<WORKSHOP_DB>` |
-| `--model-url` | CAI deployment URL |
-| `--model-version` | e.g. `1` |
+3. Click **Create** → **Run**
 
-### Step 6.2 — Run batch scoring
+### Step 5.2 — Validate in job logs
 
-1. Run job manually first.
-2. Check logs for rows scored and any API errors.
+**Look for:**
+```
+SUCCESS: scored 40000 applicants into workshop_credit.scores
+```
 
-### Step 6.3 — Validate scores table
+### Step 5.3 — Validate in CAI (optional)
 
 ```python
-scores = spark.table("<WORKSHOP_DB>.scores")
-scores.printSchema()
+scores = spark.table("workshop_credit.scores")
 scores.groupBy("risk_band").count().orderBy("risk_band").show()
-scores.orderBy(F.desc("probability_default")).show(10)
+scores.orderBy("probability_default", ascending=False).show(10)
 ```
 
 **Expected columns:**
-- `applicant_id`
-- `probability_default`
-- `risk_band`
-- `model_name`
-- `model_version`
-- `scored_at`
+- `applicant_id`, `probability_default`, `risk_band`
+- `model_name`, `model_version`, `scored_at`
 
-### Step 6.4 — Add scoring to Airflow DAG
-
-Extend DAG with task: `build_features >> batch_score`
-
-Trigger full pipeline and confirm `scores` refreshes.
-
-### Step 6.5 — Capstone check
-
-You should now have:
+### Step 5.4 — Capstone check
 
 ```
 raw_applications → features → scores
@@ -441,50 +403,55 @@ raw_applications → features → scores
                  CAI model API
 ```
 
-✅ **Lab 6 complete.**
+✅ **Lab 5 complete.**
 
 ---
 
-## Lab 7 — Governance & explainability (CAI)
+## Lab 6 — Governance & explainability (CAI, optional)
 
 **Goal:** Generate reason codes for one applicant using SHAP.
 
 **Time:** 30 minutes
 
-### Step 7.1 — Run explainability script
-
-Open `labs/cai/06_explainability.py` in CAI.
-
-### Step 7.2 — Interpret output
-
-Example adverse-action style output:
-
-```
-Applicant ID: 12345
-Probability of default: 0.31 (Risk band: C)
-Top contributing factors:
-  1. utilization (+0.08)
-  2. delinq_total (+0.05)
-  3. debt_ratio (+0.03)
-  4. income_missing (+0.02)
-```
-
-### Step 7.3 — Governance discussion (with facilitator)
+1. Open `labs/cai/06_explainability.py` in CAI
+2. Run script — review top SHAP contributors
+3. Discuss with facilitator:
 
 | Question | Platform answer |
 |----------|-----------------|
-| Who can read raw PII? | Ranger policy on `raw_applications` |
-| Which data trained the model? | MLflow param `features_snapshot_id` |
-| Which model version scored this applicant? | `scores.model_version` column |
-| Can we reproduce training data? | Iceberg time travel to snapshot ID |
+| Who can read raw PII? | Ranger on `raw_applications` |
+| Which data trained the model? | MLflow `features_snapshot_id` |
+| Which model scored this applicant? | `scores.model_version` |
+| Reproduce training data? | Iceberg time travel to snapshot ID |
 
 ✅ **Workshop complete.**
 
 ---
 
-## Quick reference — feature column order for API
+## Appendix — Airflow (skipped)
 
-When calling the model API, pass features in this order:
+This workshop runs CDE jobs **manually in order**. In production, you would orchestrate with **CDE Airflow**:
+
+```
+ingest → quality → features → batch score
+```
+
+See `labs/airflow_credit_scoring_dag.py` for a future reference implementation.
+
+---
+
+## Quick reference — CDE job arguments
+
+| Job | Arguments |
+|-----|-----------|
+| `credit-00-validate` | `--db workshop_credit` |
+| `credit-01-ingest-raw` | `--db workshop_credit` `--landing s3a://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing` |
+| `credit-02-build-features` | `--db workshop_credit` |
+| `credit-04-batch-score` | `--db workshop_credit` `--model-url <URL>` `--model-name credit_default_model` `--model-version 1` |
+
+---
+
+## Quick reference — feature column order for API
 
 ```
 [utilization, age, debt_ratio, delinq_total, open_credit_lines,
@@ -492,14 +459,19 @@ When calling the model API, pass features in this order:
  high_utilization_flag]
 ```
 
+---
+
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| `Table not found` | Check database name and Ranger policy |
+| `Table not found` | Check database `workshop_credit` and Ranger policy |
+| Ingest 0 rows | Verify CSV path in S3; use `s3a://` in job args |
+| `Main Class` required error | Upload `.py` file; leave Main Class empty for Python |
+| CDE Sessions unavailable | Use Jobs only — this guide supports that |
 | Spark OOM | Reduce data or increase executor memory |
-| MLflow run missing | Confirm `mlflow.start_run()` block executed |
+| MLflow run missing | Confirm `mlflow.start_run()` executed |
 | Model API 401 | Refresh CAI API token |
-| Batch score timeout | Score in chunks (see `04_batch_score.py`) |
+| Batch score timeout | See chunking in `04_batch_score.py` |
 
-Contact facilitator for environment-specific URLs and credentials.
+Contact facilitator for CAI model URL and credentials.
