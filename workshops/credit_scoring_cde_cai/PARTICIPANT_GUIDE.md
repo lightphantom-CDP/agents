@@ -504,7 +504,9 @@ See `labs/airflow_credit_scoring_dag.py` for a future reference implementation.
 | Batch score timeout | See chunking in `04_batch_score.py` |
 | Job exits in ~30s, exit 0, no Python output | **Wrong app file source** — use CDE **Resource** for `.py`, not `s3a://.../01_ingest_raw.py`. Run `00_test_hello.py` first |
 | Log shows `PythonRunner s3a://.../*.py` | Edit job → Application file → pick **Resource**, not S3 path |
-| No `>>> 01_ingest_raw.py LOADED <<<` in logs | Script never ran — re-point job to Resource; re-upload latest `01_ingest_raw.py` from repo |
+| Job dies in <5s, no `Running Spark version` line | Resource file missing or wrong | Re-upload `.py` to Resources; confirm job picks `file:///app/mount/01_ingest_raw.py` |
+| `file:///app/mount/` but no Python logs | Old script used `if __name__` only | Re-upload latest `01_ingest_raw.py` (calls `main()` at module level like validate job) |
+| No `--db` / `--landing` in spark-submit command | Arguments not set on job | Add 4 argument rows OR rely on script defaults (workshop paths baked in) |
 | `Failed to register udf` in logs | Usually a WARN — ignore if job succeeds |
 | `getent` / `hadoop` not found | Usually harmless in CDE containers |
 
