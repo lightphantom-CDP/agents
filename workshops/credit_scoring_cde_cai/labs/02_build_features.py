@@ -6,7 +6,13 @@ CDE Job parameters:
 """
 
 import argparse
+import logging
+import sys
+
 from pyspark.sql import SparkSession, functions as F
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("credit-02-build-features")
 
 
 FEATURE_COLS = [
@@ -65,6 +71,7 @@ def build_features(raw_df):
 
 def main():
     args = parse_args()
+    logger.info("Starting features job for database %s", args.db)
     spark = SparkSession.builder.appName("credit-02-build-features").getOrCreate()
 
     raw_table = f"{args.db}.raw_applications"
@@ -79,6 +86,7 @@ def main():
     default_rate = (
         spark.table(features_table).groupBy("default_flag").count().orderBy("default_flag").collect()
     )
+    logger.info("SUCCESS: wrote %s rows to %s", count, features_table)
     print(f"SUCCESS: wrote {count} rows to {features_table}")
     print(f"Default distribution: {default_rate}")
 
@@ -87,5 +95,8 @@ def main():
         print(f"LATEST_SNAPSHOT_ID={snapshot[0]['snapshot_id']}")
 
 
-if __name__ == "__main__":
+try:
     main()
+except Exception:
+    logger.exception("FEATURES JOB FAILED")
+    sys.exit(1)

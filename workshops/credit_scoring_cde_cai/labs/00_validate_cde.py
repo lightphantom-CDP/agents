@@ -1,14 +1,13 @@
-"""
-Optional smoke test — credit-00-validate
-
-Confirms CDE Spark can create and read Iceberg tables.
-Skip this job if credit-01-ingest-raw already works.
-
-CDE Job: no arguments required (optional: --db workshop_credit)
-"""
+"""Optional smoke test for CDE + Iceberg. Args: --db=workshop_credit"""
 
 import argparse
+import logging
+import sys
+
 from pyspark.sql import SparkSession
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("credit-00-validate")
 
 
 def parse_args():
@@ -19,10 +18,11 @@ def parse_args():
 
 def main():
     args = parse_args()
+    logger.info("Starting validation job for database %s", args.db)
+
     spark = SparkSession.builder.appName("credit-00-validate").getOrCreate()
 
     spark.sql(f"CREATE DATABASE IF NOT EXISTS {args.db}")
-
     table = f"{args.db}.connectivity_test"
     spark.sql(f"""
         CREATE TABLE IF NOT EXISTS {table} (
@@ -30,14 +30,14 @@ def main():
             tested_at TIMESTAMP
         ) USING iceberg
     """)
-    spark.sql(f"""
-        INSERT INTO {table}
-        VALUES ('validation_job', current_timestamp())
-    """)
-
+    spark.sql(f"INSERT INTO {table} VALUES ('validation_job', current_timestamp())")
     spark.table(table).show()
+    logger.info("SUCCESS: CDE + Iceberg working")
     print("SUCCESS: CDE + Iceberg working")
 
 
-if __name__ == "__main__":
+try:
     main()
+except Exception:
+    logger.exception("VALIDATION JOB FAILED")
+    sys.exit(1)

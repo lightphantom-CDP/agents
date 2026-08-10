@@ -473,5 +473,8 @@ See `labs/airflow_credit_scoring_dag.py` for a future reference implementation.
 | MLflow run missing | Confirm `mlflow.start_run()` executed |
 | Model API 401 | Refresh CAI API token |
 | Batch score timeout | See chunking in `04_batch_score.py` |
+| Job exits in ~30s, no SUCCESS line | Re-upload fixed `.py` from repo; CDE needs `main()` at bottom (not only `if __name__`) |
+| `Failed to register udf` in logs | Usually a WARN — ignore if job succeeds |
+| `getent` / `hadoop` not found | Usually harmless in CDE containers |
 
 Contact facilitator for CAI model URL and credentials.

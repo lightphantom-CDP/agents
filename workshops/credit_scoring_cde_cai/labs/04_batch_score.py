@@ -14,11 +14,16 @@ Environment variable alternative:
 
 import argparse
 import json
+import logging
 import os
+import sys
 from datetime import datetime
 
 import requests
 from pyspark.sql import SparkSession, functions as F, types as T
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("credit-04-batch-score")
 
 
 FEATURE_COLS = [
@@ -128,9 +133,13 @@ def main():
     scores_table = f"{args.db}.scores"
     scores_df.writeTo(scores_table).using("iceberg").option("overwrite-schema", "true").createOrReplace()
 
+    logger.info("SUCCESS: scored applicants into %s", scores_table)
     print(f"SUCCESS: scored {scores_df.count()} applicants into {scores_table}")
     scores_df.groupBy("risk_band").count().orderBy("risk_band").show()
 
 
-if __name__ == "__main__":
+try:
     main()
+except Exception:
+    logger.exception("BATCH SCORE JOB FAILED")
+    sys.exit(1)
