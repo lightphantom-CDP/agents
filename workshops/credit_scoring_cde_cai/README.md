@@ -15,8 +15,9 @@ Predict whether a loan applicant will become seriously delinquent (90+ days past
 
 ## Start here
 
-1. **Facilitator:** Read [FACILITATOR_RUNBOOK.md](FACILITATOR_RUNBOOK.md) and complete pre-workshop setup.
-2. **Participant:** Read [PARTICIPANT_GUIDE.md](PARTICIPANT_GUIDE.md) and follow labs in order.
+1. **Team / stakeholders:** Read [WORKSHOP_SYLLABUS.md](WORKSHOP_SYLLABUS.md) and [docs/ARCHITECTURE_ONE_PAGER.md](docs/ARCHITECTURE_ONE_PAGER.md).
+2. **Facilitator:** Read [FACILITATOR_RUNBOOK.md](FACILITATOR_RUNBOOK.md) and complete pre-workshop setup.
+3. **Participant:** Read [PARTICIPANT_GUIDE.md](PARTICIPANT_GUIDE.md) and follow labs in order (Jobs-only if Sessions unavailable).
 
 ## Lab sequence
 
