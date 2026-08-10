@@ -134,7 +134,29 @@ s3://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing/cs-training.csv
 
 Expected: **~40,000 rows**, 12 columns, label column `SeriousDlqin2yrs`.
 
-### Step 1.2 — Create CDE Job for ingest
+### Step 1.2 — Upload Python scripts to CDE Resources (required)
+
+> **Do not use an `s3a://.../*.py` path as the application file.**  
+> CDE will start Spark but **will not run your Python code** — the job exits in ~30s with exit code 0 and no `SUCCESS` line.  
+> In driver logs you may see: `PythonRunner s3a://.../01_ingest_raw.py` with **no** `>>> 01_ingest_raw.py LOADED <<<`.
+
+1. CDE → **Resources** → create folder `workshop-credit` (or use facilitator folder)
+2. Upload from this repo:
+   - `labs/00_test_hello.py` (smoke test — run this first)
+   - `labs/01_ingest_raw.py`
+3. **Optional:** keep `cs-training.csv` on S3 only (data); scripts belong in **Resources**.
+
+### Step 1.2b — Smoke test (recommended)
+
+1. CDE → **Jobs** → **Create Job**
+2. Application file: **Resource** → `workshop-credit/00_test_hello.py` (not S3)
+3. Main Class: **leave empty**
+4. Arguments: **none**
+5. Run → logs must show `HELLO FROM CDE PYTHON` and `CDE PYTHON TEST PASSED`
+
+If the hello job fails, fix Resources / job type before ingest.
+
+### Step 1.3 — Create CDE Job for ingest
 
 1. CDE → **Jobs** → **Create Job**
 2. Fill in:
@@ -143,26 +165,33 @@ Expected: **~40,000 rows**, 12 columns, label column `SeriousDlqin2yrs`.
 |-------|-------|
 | Job Type | **Spark** |
 | Name | `credit-01-ingest-raw` |
-| Application Files | Upload `labs/01_ingest_raw.py` |
+| Application file | **Resource** → `workshop-credit/01_ingest_raw.py` |
 | Main Class | *(leave empty for Python)* |
-| Arguments | `--db workshop_credit` |
-| Arguments | `--landing s3a://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing` |
+| Arguments (4 separate rows) | `--db` |
+| | `workshop_credit` |
+| | `--landing` |
+| | `s3a://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing` |
 
-3. **Resources:** 2 executors, 4g memory (facilitator may adjust)
+Or use combined form: `--db=workshop_credit` and `--landing=s3a://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing`
+
+3. **Cluster resources:** 2 executors, 4g memory (facilitator may adjust)
 4. Click **Create**
 
-### Step 1.3 — Run the job
+### Step 1.4 — Run the job
 
 1. Click **Run** on `credit-01-ingest-raw`
 2. Open **Job Runs** → select run → **Logs**
 3. Wait for status **Succeeded**
 
-**Look for in logs:**
+**Look for in logs (in order):**
 ```
+>>> 01_ingest_raw.py LOADED <<<
+>>> START ingest db=workshop_credit landing=s3a://...
+>>> Reading: s3a://.../cs-training.csv
 SUCCESS: wrote 40000 rows to workshop_credit.raw_applications
 ```
 
-### Step 1.4 — Validate (Job logs or CAI)
+### Step 1.5 — Validate (Job logs or CAI)
 
 **Option A — Job logs:** confirm row count in success message above.
 
@@ -180,7 +209,7 @@ raw.printSchema()
 - `default_flag` values 0 and 1
 - `ingested_at` column populated
 
-### Step 1.5 — Discussion questions
+### Step 1.6 — Discussion questions
 
 1. Why store raw data in Iceberg instead of keeping only CSV?
 2. What governance policies (Ranger) should apply to applicant data?
@@ -473,7 +502,9 @@ See `labs/airflow_credit_scoring_dag.py` for a future reference implementation.
 | MLflow run missing | Confirm `mlflow.start_run()` executed |
 | Model API 401 | Refresh CAI API token |
 | Batch score timeout | See chunking in `04_batch_score.py` |
-| Job exits in ~30s, no SUCCESS line | Re-upload fixed `.py` from repo; CDE needs `main()` at bottom (not only `if __name__`) |
+| Job exits in ~30s, exit 0, no Python output | **Wrong app file source** — use CDE **Resource** for `.py`, not `s3a://.../01_ingest_raw.py`. Run `00_test_hello.py` first |
+| Log shows `PythonRunner s3a://.../*.py` | Edit job → Application file → pick **Resource**, not S3 path |
+| No `>>> 01_ingest_raw.py LOADED <<<` in logs | Script never ran — re-point job to Resource; re-upload latest `01_ingest_raw.py` from repo |
 | `Failed to register udf` in logs | Usually a WARN — ignore if job succeeds |
 | `getent` / `hadoop` not found | Usually harmless in CDE containers |
 

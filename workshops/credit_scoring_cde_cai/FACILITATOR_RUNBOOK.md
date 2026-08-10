@@ -58,18 +58,27 @@ Ranger policies (minimum):
 
 ### 4. Upload workshop assets to CDE
 
-Upload to CDE **Resources** folder `workshop-credit/`:
+**CSV → S3** (data only):
 
+```
+s3://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing/cs-training.csv
+```
+
+**Python scripts → CDE Resources** folder `workshop-credit/` (not S3 application path):
+
+- `labs/00_test_hello.py` — run first to confirm Python executes
 - `labs/01_ingest_raw.py`
 - `labs/02_build_features.py`
 - `labs/03_data_quality.py`
 - `labs/04_batch_score.py`
-- `labs/airflow_credit_scoring_dag.py`
+
+> **Facilitator note:** If a job log shows `PythonRunner s3a://.../*.py` and exits in ~30s with no `HELLO` / `LOADED` / `SUCCESS` lines, the job is pointed at S3 for the script. Fix: Application file = **Resource**.
 
 ### 5. Pre-create CDE jobs
 
-| Job name | Script | Parameters |
-|----------|--------|------------|
+| Job name | Script (Resource path) | Parameters |
+|----------|------------------------|------------|
+| `credit-00-hello` | `00_test_hello.py` | *(none)* |
 | `credit-01-ingest-raw` | `01_ingest_raw.py` | `--db workshop_credit --landing s3a://...` |
 | `credit-02-build-features` | `02_build_features.py` | `--db workshop_credit` |
 | `credit-03-data-quality` | `03_data_quality.py` | `--db workshop_credit` |
@@ -208,6 +217,7 @@ See you there,
 | Issue | Cause | Fix |
 |-------|-------|-----|
 | Permission denied on table | Ranger | Add user to workshop-participants group |
+| Job exits ~30s, no Python output | `.py` on S3 as app file | Use CDE **Resource** for scripts; S3 only for CSV |
 | Ingest 0 rows | Wrong landing path | Verify s3a path and file name |
 | AUC very low (~0.50) | Wrong feature order | Check FEATURE_COLS match training |
 | API connection refused from CDE | Network policy | Allow CDE → CAI endpoint in firewall |

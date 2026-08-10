@@ -1,36 +1,37 @@
 """
 Lab 1 — Ingest raw credit application data into Iceberg.
 
-CDE Job parameters (use separate rows OR equals form):
-  --db=workshop_credit
-  --landing=s3a://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing
+CDE: upload to Resources (recommended), NOT as S3 application file.
 
-Optional:
-  --synthetic   Generate synthetic rows instead of reading CSV.
+Arguments (4 separate rows):
+  --db
+  workshop_credit
+  --landing
+  s3a://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing
+
+Or Spark config / env fallback:
+  WORKSHOP_DB=workshop_credit
+  WORKSHOP_LANDING=s3a://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing
 """
 
 import argparse
-import logging
+import os
 import sys
 
-from pyspark.sql import SparkSession, functions as F
-from pyspark.sql.types import (
-    DoubleType,
-    IntegerType,
-    StructField,
-    StructType,
-)
+print(">>> 01_ingest_raw.py LOADED <<<", flush=True)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger("credit-01-ingest-raw")
+from pyspark.sql import SparkSession, functions as F
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--db", required=True, help="Hive/Iceberg database name")
-    parser.add_argument("--landing", default=None, help="S3 landing folder with cs-training.csv")
-    parser.add_argument("--synthetic", action="store_true", help="Generate synthetic data")
-    return parser.parse_args()
+    parser.add_argument("--db", default=os.environ.get("WORKSHOP_DB"))
+    parser.add_argument("--landing", default=os.environ.get("WORKSHOP_LANDING"))
+    parser.add_argument("--synthetic", action="store_true")
+    args = parser.parse_args()
+    if not args.db:
+        raise ValueError("Missing --db (or env WORKSHOP_DB)")
+    return args
 
 
 def generate_synthetic_data(spark, n_rows=10_000):
@@ -52,28 +53,27 @@ def generate_synthetic_data(spark, n_rows=10_000):
 
 def main():
     args = parse_args()
-    logger.info("Starting ingest job")
-    logger.info("db=%s landing=%s synthetic=%s", args.db, args.landing, args.synthetic)
+    print(f">>> START ingest db={args.db} landing={args.landing} <<<", flush=True)
 
     spark = SparkSession.builder.appName("credit-01-ingest-raw").getOrCreate()
-    logger.info("SparkSession created")
+    print(">>> SparkSession OK <<<", flush=True)
 
     spark.sql(f"CREATE DATABASE IF NOT EXISTS {args.db}")
-    logger.info("Database ready: %s", args.db)
+    print(f">>> Database OK: {args.db} <<<", flush=True)
 
     if args.synthetic:
         raw = generate_synthetic_data(spark)
     else:
         if not args.landing:
-            raise ValueError("Provide --landing path or use --synthetic")
+            raise ValueError("Missing --landing (or env WORKSHOP_LANDING)")
         path = f"{args.landing.rstrip('/')}/cs-training.csv"
-        logger.info("Reading CSV from %s", path)
+        print(f">>> Reading: {path} <<<", flush=True)
         raw = spark.read.csv(path, header=True, inferSchema=True)
 
-    row_count = raw.count()
-    logger.info("Read %s rows from source", row_count)
-    if row_count == 0:
-        raise ValueError("Source has 0 rows — check CSV path and file name")
+    count = raw.count()
+    print(f">>> Read {count} rows <<<", flush=True)
+    if count == 0:
+        raise ValueError("CSV has 0 rows — check file exists at landing/cs-training.csv")
 
     cleaned = (
         raw.withColumnRenamed("Id", "applicant_id")
@@ -92,7 +92,7 @@ def main():
     )
 
     table = f"{args.db}.raw_applications"
-    logger.info("Writing Iceberg table %s", table)
+    print(f">>> Writing Iceberg table: {table} <<<", flush=True)
     (
         cleaned.writeTo(table)
         .using("iceberg")
@@ -100,14 +100,16 @@ def main():
         .createOrReplace()
     )
 
-    count = spark.table(table).count()
-    logger.info("SUCCESS: wrote %s rows to %s", count, table)
-    print(f"SUCCESS: wrote {count} rows to {table}")
+    final_count = spark.table(table).count()
+    print(f"SUCCESS: wrote {final_count} rows to {table}", flush=True)
 
 
-# CDE Spark: always call main() — do not rely on if __name__ == "__main__"
-try:
-    main()
-except Exception:
-    logger.exception("INGEST JOB FAILED")
-    sys.exit(1)
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(f"INGEST JOB FAILED: {exc}", flush=True)
+        import traceback
+
+        traceback.print_exc()
+        sys.exit(1)
