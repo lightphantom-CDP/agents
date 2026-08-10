@@ -13,6 +13,9 @@ import logging
 import os
 import sys
 
+SCRIPT_VERSION = "2026-08-10-v4"
+print(f"INGEST_SCRIPT_VERSION={SCRIPT_VERSION}", flush=True)
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("credit-01-ingest-raw")
 
