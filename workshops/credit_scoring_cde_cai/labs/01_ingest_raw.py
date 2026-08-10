@@ -138,12 +138,12 @@ def main():
 
 try:
     main()
-except Exception:
+except Exception as exc:
     logger.exception("INGEST JOB FAILED")
     try:
         spark = SparkSession.getActiveSession()
         if spark:
-            jlog(spark, "INGEST JOB FAILED — see stack trace in logs")
+            jlog(spark, f"INGEST JOB FAILED: {type(exc).__name__}: {exc}")
     except Exception:
         pass
     sys.exit(1)
