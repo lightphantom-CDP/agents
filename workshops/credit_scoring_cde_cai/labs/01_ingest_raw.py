@@ -1,11 +1,11 @@
 """
 Lab 1 — Ingest raw credit application data into Iceberg.
 
-CDE Resource path: workshop-credit/01_ingest_raw.py
+CDE Resource: workshop-credit/01_ingest_raw.py
 
-Job arguments (optional — defaults match this workshop):
-  --db workshop_credit
-  --landing s3a://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing
+Arguments (optional, 2 rows):
+  --db=workshop_credit_user001
+  --landing=s3a://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing
 """
 
 import argparse
@@ -13,32 +13,46 @@ import logging
 import os
 import sys
 
-SCRIPT_VERSION = "2026-08-10-v4"
-print(f"INGEST_SCRIPT_VERSION={SCRIPT_VERSION}", flush=True)
+SCRIPT_VERSION = "2026-08-10-v5"
+DEFAULT_DB = "workshop_credit"
+DEFAULT_LANDING = "s3a://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("credit-01-ingest-raw")
 
-DEFAULT_DB = "workshop_credit"
-DEFAULT_LANDING = "s3a://workshpcloud-buk-5e3a7882/workshop/credit_scoring/landing"
-
-logger.info("01_ingest_raw.py loaded argv=%s name=%s", sys.argv, __name__)
-
 from pyspark.sql import SparkSession, functions as F
+
+
+def _pick_arg(flag, default):
+    """Resolve CLI flag from argv, env, or default (CDE PythonRunner-safe)."""
+    env_key = flag.lstrip("-").replace("-", "_").upper()
+    for arg in sys.argv:
+        if arg == flag and sys.argv.index(arg) + 1 < len(sys.argv):
+            return sys.argv[sys.argv.index(arg) + 1]
+        if arg.startswith(flag + "="):
+            return arg.split("=", 1)[1]
+    return os.environ.get(env_key) or default
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--db",
-        default=os.environ.get("WORKSHOP_DB", DEFAULT_DB),
-    )
-    parser.add_argument(
-        "--landing",
-        default=os.environ.get("WORKSHOP_LANDING", DEFAULT_LANDING),
-    )
+    parser.add_argument("--db", default=None)
+    parser.add_argument("--landing", default=None)
     parser.add_argument("--synthetic", action="store_true")
-    return parser.parse_args()
+    args, unknown = parser.parse_known_args()
+    if unknown:
+        logger.warning("Ignoring unknown argv entries: %s", unknown)
+
+    db = args.db or _pick_arg("--db", DEFAULT_DB)
+    landing = args.landing or _pick_arg("--landing", DEFAULT_LANDING)
+    return argparse.Namespace(db=db, landing=landing, synthetic=args.synthetic)
+
+
+def jlog(spark, message):
+    """Write to Spark driver log (visible in CDE job logs)."""
+    spark.sparkContext._jvm.org.apache.log4j.LogManager.getLogger(
+        "credit-01-ingest-raw"
+    ).info(message)
 
 
 def generate_synthetic_data(spark, n_rows=10_000):
@@ -60,9 +74,11 @@ def generate_synthetic_data(spark, n_rows=10_000):
 
 def main():
     args = parse_args()
-    logger.info("Starting ingest db=%s landing=%s", args.db, args.landing)
-
     spark = SparkSession.builder.appName("credit-01-ingest-raw").getOrCreate()
+
+    jlog(spark, f"INGEST_SCRIPT_VERSION={SCRIPT_VERSION}")
+    jlog(spark, f"argv={sys.argv}")
+    jlog(spark, f"Starting ingest db={args.db} landing={args.landing}")
 
     spark.sql(f"CREATE DATABASE IF NOT EXISTS {args.db}")
 
@@ -70,11 +86,11 @@ def main():
         raw = generate_synthetic_data(spark)
     else:
         path = f"{args.landing.rstrip('/')}/cs-training.csv"
-        logger.info("Reading CSV from %s", path)
+        jlog(spark, f"Reading CSV from {path}")
         raw = spark.read.csv(path, header=True, inferSchema=True)
 
     count = raw.count()
-    logger.info("Read %s rows from source", count)
+    jlog(spark, f"Read {count} rows from source")
     if count == 0:
         raise ValueError("CSV has 0 rows — check file exists at landing/cs-training.csv")
 
@@ -95,7 +111,7 @@ def main():
     )
 
     table = f"{args.db}.raw_applications"
-    logger.info("Writing Iceberg table %s", table)
+    jlog(spark, f"Writing Iceberg table {table}")
     (
         cleaned.writeTo(table)
         .using("iceberg")
@@ -105,7 +121,7 @@ def main():
 
     final_count = spark.table(table).count()
     msg = f"SUCCESS: wrote {final_count} rows to {table}"
-    logger.info(msg)
+    jlog(spark, msg)
     print(msg, flush=True)
 
 
@@ -113,4 +129,10 @@ try:
     main()
 except Exception:
     logger.exception("INGEST JOB FAILED")
+    try:
+        spark = SparkSession.getActiveSession()
+        if spark:
+            jlog(spark, "INGEST JOB FAILED — see stack trace in logs")
+    except Exception:
+        pass
     sys.exit(1)
