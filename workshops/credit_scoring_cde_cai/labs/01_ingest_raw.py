@@ -87,7 +87,18 @@ def main():
     else:
         path = f"{args.landing.rstrip('/')}/cs-training.csv"
         jlog(spark, f"Reading CSV from {path}")
-        raw = spark.read.csv(path, header=True, inferSchema=True)
+        try:
+            raw = spark.read.csv(path, header=True, inferSchema=True)
+            count = raw.count()
+        except Exception as exc:
+            jlog(spark, f"CSV read failed: {type(exc).__name__}: {exc}")
+            jlog(
+                spark,
+                "Check: (1) file exists in S3 landing folder, "
+                "(2) Ranger allows s3a read for user001, "
+                "(3) path uses s3a:// not s3://",
+            )
+            raise
 
     count = raw.count()
     jlog(spark, f"Read {count} rows from source")
