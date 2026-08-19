@@ -3,24 +3,30 @@ Lab 6 — Batch score applicants via CAI model REST API.
 
 CDE Job parameters:
   --db workshop_credit
-  --model-url https://<cai-host>/model/credit-scoring-api/infer
+  --model-url https://<cai-host>/model
   --model-name credit_default_model
   --model-version 1
-  --auth-token <optional bearer token>
+  --access-key <gateway access key from CAI deployment Overview>
+  --batch-size 1
+  --max-rows 0
+  --retries 3
 
-Environment variable alternative:
+Environment variable alternatives:
   CAI_MODEL_TOKEN
+  CAI_MODEL_ACCESS_KEY
 """
 
 import argparse
 import json
 import logging
+import math
 import os
 import sys
+import time
 from datetime import datetime
 
 import requests
-from pyspark.sql import SparkSession, functions as F, types as T
+from pyspark.sql import SparkSession, types as T
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("credit-04-batch-score")
@@ -47,7 +53,10 @@ def parse_args():
     parser.add_argument("--model-name", default="credit_default_model")
     parser.add_argument("--model-version", default="1")
     parser.add_argument("--auth-token", default=None)
-    parser.add_argument("--batch-size", type=int, default=500)
+    parser.add_argument("--access-key", default=None)
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--max-rows", type=int, default=0, help="0 = score all rows; use 10 for a quick test")
+    parser.add_argument("--retries", type=int, default=3, help="Retries for model API timeouts")
     return parser.parse_args()
 
 
@@ -61,17 +70,62 @@ def risk_band(probability: float) -> str:
     return "D"
 
 
-def score_batch(rows, model_url, token):
+def feature_vector(row):
+    values = []
+    for col in FEATURE_COLS:
+        val = row[col]
+        if val is None:
+            values.append(0.0)
+        elif isinstance(val, bool):
+            values.append(float(int(val)))
+        else:
+            num = float(val)
+            if math.isnan(num) or math.isinf(num):
+                num = 0.0
+            values.append(num)
+    return values
+
+
+def score_batch(rows, model_url, token, access_key=None, retries=3):
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    payload = {"inputs": [[float(row[c]) for c in FEATURE_COLS] for row in rows]}
-    response = requests.post(model_url, headers=headers, data=json.dumps(payload), timeout=120)
-    response.raise_for_status()
+    inner = {"inputs": [feature_vector(row) for row in rows]}
+    if access_key:
+        payload = {"accessKey": access_key, "request": inner}
+    else:
+        payload = inner
+
+    if len(rows) == 1:
+        logger.info("Sample payload: %s", json.dumps(payload)[:300])
+
+    last_response = None
+    for attempt in range(1, retries + 1):
+        response = requests.post(model_url, headers=headers, json=payload, timeout=180)
+        last_response = response
+        if response.ok:
+            break
+        if response.status_code in (500, 502, 503, 504) and attempt < retries:
+            logger.warning(
+                "Model API attempt %s/%s failed (%s), retrying in 45s: %s",
+                attempt,
+                retries,
+                response.status_code,
+                response.text[:200],
+            )
+            time.sleep(45)
+            continue
+        logger.error("Model API error %s: %s", response.status_code, response.text[:500])
+        response.raise_for_status()
+    else:
+        last_response.raise_for_status()
+    response = last_response
     body = response.json()
 
-    # Support common CAI / MLflow response shapes
+    if isinstance(body, dict) and "response" in body:
+        body = body["response"]
+
     if isinstance(body, dict) and "predictions" in body:
         preds = body["predictions"]
     elif isinstance(body, list):
@@ -81,7 +135,10 @@ def score_batch(rows, model_url, token):
 
     scored = []
     for row, pred in zip(rows, preds):
-        prob = float(pred[0] if isinstance(pred, (list, tuple)) else pred)
+        if isinstance(pred, (list, tuple)):
+            prob = float(pred[1] if len(pred) > 1 else pred[0])
+        else:
+            prob = float(pred)
         scored.append(
             {
                 "applicant_id": int(row["applicant_id"]),
@@ -98,6 +155,19 @@ def score_batch(rows, model_url, token):
 def main():
     args = parse_args()
     token = args.auth_token or os.environ.get("CAI_MODEL_TOKEN")
+    access_key = args.access_key or os.environ.get("CAI_MODEL_ACCESS_KEY")
+    if not access_key and "modelservice" in args.model_url:
+        raise ValueError(
+            "Missing --access-key (or CAI_MODEL_ACCESS_KEY env var). "
+            "Required for gateway URL .../model"
+        )
+    logger.info(
+        "Config: db=%s batch_size=%s access_key_set=%s max_rows=%s",
+        args.db,
+        args.batch_size,
+        bool(access_key),
+        args.max_rows,
+    )
     spark = SparkSession.builder.appName("credit-04-batch-score").getOrCreate()
 
     features = spark.table(f"{args.db}.features").select("applicant_id", *FEATURE_COLS)
@@ -105,18 +175,22 @@ def main():
 
     all_scores = []
     buffer = []
+    row_count = 0
     for row in features.toLocalIterator():
         record = row.asDict()
         record["model_name"] = args.model_name
         record["model_version"] = args.model_version
         record["scored_at"] = scored_at
         buffer.append(record)
+        row_count += 1
         if len(buffer) >= args.batch_size:
-            all_scores.extend(score_batch(buffer, args.model_url, token))
+            all_scores.extend(score_batch(buffer, args.model_url, token, access_key, args.retries))
             buffer = []
+        if args.max_rows and row_count >= args.max_rows:
+            break
 
     if buffer:
-        all_scores.extend(score_batch(buffer, args.model_url, token))
+        all_scores.extend(score_batch(buffer, args.model_url, token, access_key, args.retries))
 
     schema = T.StructType(
         [
