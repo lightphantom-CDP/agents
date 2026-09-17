@@ -1,0 +1,22 @@
+[
+  "age",
+  "monthly_income",
+  "requested_loan_amount",
+  "tenure_months",
+  "existing_loans",
+  "credit_history_months",
+  "thin_file",
+  "utility_on_time_pct",
+  "cash_flow_stability_score",
+  "inquiry_count_90d",
+  "debt_to_income_ratio",
+  "device_trust_score",
+  "prior_default_flag",
+  "txn_count_90d",
+  "merchant_category_diversity",
+  "utility_payment_count",
+  "international_txn_count",
+  "avg_txn_amount",
+  "net_cash_flow_90d",
+  "income_to_spend_ratio"
+]

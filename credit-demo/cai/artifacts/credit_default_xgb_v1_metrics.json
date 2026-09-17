@@ -1,0 +1,9 @@
+{
+  "model_name": "credit_default_xgb_v1",
+  "auc_holdout": 0.611,
+  "auc_holdout_thin_file": 0.512,
+  "feature_count": 20,
+  "training_rows": 4000,
+  "model_backend": "sklearn_hist_gb",
+  "source_table": "local_csv"
+}

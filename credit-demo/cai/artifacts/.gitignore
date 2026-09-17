@@ -1,0 +1,3 @@
+# Generated model artifacts (recreated by train_and_register.py)
+*.joblib
+credit_scores_batch.csv

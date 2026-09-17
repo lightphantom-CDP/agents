@@ -1,0 +1,12 @@
+# Credit Demo Workshop — Python dependencies
+
+# Local prep and CAI Workbench
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.3
+xgboost>=2.0
+shap>=0.50
+joblib>=1.3
+
+# Optional on CDE only
+# pyspark>=3.3

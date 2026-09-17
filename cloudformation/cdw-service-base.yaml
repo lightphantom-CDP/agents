@@ -1,0 +1,4465 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Deploys CDW Service
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: "Cluster Configuration"
+      Parameters:
+      - KeyName
+    - Label:
+        default: "Network Configuration"
+      Parameters:
+      - CustomVpc
+      - VpcCIDRBlock
+      - CustomSubnets
+      - CustomSubnet1
+      - CustomSubnet2
+      - CustomSubnet3
+      - SkipEFSMountSubnet3
+      - PublicSubnetCIDRBlock1
+      - PublicSubnetCIDRBlock2
+      - PublicSubnetCIDRBlock3
+      - PrivateSubnetCIDRBlock1
+      - PrivateSubnetCIDRBlock2
+      - PrivateSubnetCIDRBlock3
+      - AssociatePublicIpAddress
+      - PublicAccessCidrs
+    - Label:
+        default: "Database Configuration"
+      Parameters:
+      - DBName
+      - DBMasterUsername
+      - DBMasterUserPassword
+      - DBEngine
+      - DBEngineVersion
+      - DBInstanceClass
+      - DBAllocatedStorage
+      - DBSnapshotIdentifier
+      - DBBackupRetentionPeriod
+      - DBMultiAZ
+    - Label:
+        default: "Kubernetes Configuration"
+      Parameters:
+      - EksBaseVersion
+      - EksAmi
+      - EksImageIdSSMParam
+      - EksImageIdSSMParamARM
+      - DisableIMDSv1
+      - MinComputeNodeCount
+      - DesiredComputeNodeCount
+      - MaxComputeNodeCount
+      - MinSharedServicesNodeCount
+      - MaxSharedServicesNodeCount
+      - SpotInstancesEnabled
+      - SpotPrice
+      - SharedServicesNodeInstanceType
+      - ComputeNodeInstanceType
+      - DevModeComputeNodeInstanceType
+      - DevModeEnabled
+      - NodeVolumeSize
+    - Label:
+        default: "S3 Bucket Configuration"
+      Parameters:
+      - SdxS3Bucket
+      - LogBucket
+      - BackupBucket
+      - LogBucketLocation
+      - BackupBucketLocation
+      - SdxStorageBaseLocation
+    - Label:
+        default: "IAM + KMS Configuration"
+      Parameters:
+      - RoleARN
+      - EncryptionKeyARN
+
+Parameters:
+  KeyName:
+    Description: The Key Pair to use for EC2 instances
+    Type: AWS::EC2::KeyPair::KeyName
+    MinLength: '1'
+
+  LogBucket:
+    Description: S3 bucket name where DWX stores log data and other diagnostics (query profiles) data.
+    Type: String
+    MinLength: '1'
+
+  BackupBucket:
+    Description: S3 bucket name where DWX stores backup data.
+    Type: String
+    MinLength: '1'
+
+  SdxS3Bucket:
+    Description: S3 bucket that's shared with SDX
+    Type: String
+    MinLength: '1'
+
+  LogBucketLocation:
+    Description: S3 bucket path where DWX stores log data and other diagnostics (query profiles) data.
+    Type: String
+    MinLength: '1'
+
+  BackupBucketLocation:
+    Description: S3 bucket path where DWX stores backup data.
+    Type: String
+    MinLength: '1'
+
+  SdxStorageBaseLocation:
+    Description: S3 bucket Storage location for workload data that's shared with SDX
+    Type: String
+    MinLength: '1'
+
+  CustomVpc:
+    Type: String
+    Default: " "
+    Description: VPC Id
+  CustomSubnets:
+    Type: String
+    Default: " "
+    Description: Comma separate list of custom public and private subnets to use for EKS instead of creating new ones
+  CustomSubnet1:
+    Type: String
+    Default: " "
+    Description: Existing private/public subnet-1 to use for EFS, RDS and ASGs
+  CustomSubnet2:
+    Type: String
+    Default: " "
+    Description: Existing private/public subnet-2 to use for EFS, RDS and ASGs
+  CustomSubnet3:
+    Type: String
+    Default: " "
+    Description: Existing private/public subnet-3 to use for EFS, RDS and ASGs
+  SkipEFSMountSubnet3:
+    Type: String
+    Default: "false"
+    AllowedValues: [true, false]
+    Description: If region contains only 2 AZs (sa-east-1 for example), set this flag to avoid EFS mounting error for same AZ mount
+
+  PublicAccessCidrs:
+    Type: String
+    Default: "0.0.0.0/0"
+    Description: Eks cluster Public access Cidrs
+
+  VpcCIDRBlock:
+    Type: String
+    Default: "192.168.0.0/16"
+    Description: The CIDR range for the VPC. This should be a valid private (RFC 1918) CIDR range.
+  PublicSubnetCIDRBlock1:
+    Type: String
+    Default: 192.168.0.0/27
+    Description: CidrBlock for public-subnet-1 within the VPC
+  PublicSubnetCIDRBlock2:
+    Type: String
+    Default: 192.168.1.0/27
+    Description: CidrBlock for public-subnet-2 within the VPC
+  PublicSubnetCIDRBlock3:
+    Type: String
+    Default: 192.168.2.0/27
+    Description: CidrBlock for public-subnet-3 within the VPC
+  PrivateSubnetCIDRBlock1:
+    Type: String
+    Default: 192.168.64.0/18
+    Description: CidrBlock for private-subnet-1 within the VPC
+  PrivateSubnetCIDRBlock2:
+    Type: String
+    Default: 192.168.128.0/18
+    Description: CidrBlock for private-subnet-2 within the VPC
+  PrivateSubnetCIDRBlock3:
+    Type: String
+    Default: 192.168.192.0/18
+    Description: CidrBlock for private-subnet-3 within the VPC
+  AssociatePublicIpAddress:
+    Type: String
+    Description: Associate instances with public IP addresses
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "false"
+  Proxy:
+    Type: String
+    Description: Full proxy address
+    NoEcho: true
+    Default: " "
+  NoProxy:
+    Type: String
+    Description: No Proxy entered by customer
+    Default: " "
+  UseProxy:
+    Type: String
+    Description: Should we set up proxy for launch template
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "false"
+
+  DBSnapshotIdentifier:
+    Description: >-
+      Optional name or Amazon Resource Name (ARN) of the DB snapshot from which
+      you want to restore (leave blank to create an empty database).
+    Type: String
+    Default: " "
+  DBAllocatedStorage:
+    Description: >-
+      The allocated storage size, specified in GB (ignored when
+      DBSnapshotIdentifier is set, value used from snapshot).
+    Type: Number
+    Default: 100
+    MinValue: 20
+    MaxValue: 16384
+  DBEngine:
+    Description: Database engine to use.
+    Type: String
+    Default: postgres
+  DBEngineVersion:
+    Description: Database engine version to use.
+    Type: String
+    Default: 16
+  DBInstanceClass:
+    Description: The instance type of database server.
+    Type: String
+    Default: db.r5.large
+  DBName:
+    Description: >-
+      Name of the database (ignored when DBSnapshotIdentifier is set, value used
+      from snapshot).
+    Type: String
+    Default: "dwx"
+  DBBackupRetentionPeriod:
+    Description: The number of days to keep snapshots of the database.
+    Type: Number
+    Default: "30"
+  DBMasterUsername:
+    Description: >-
+      The master user name for the DB instance (ignored when
+      DBSnapshotIdentifier is set, value used from snapshot).
+    Type: String
+    Default: "dwx"
+  DBMasterUserPassword:
+    Description: >-
+      The master password for the DB instance (ignored when DBSnapshotIdentifier
+      is set, value used from snapshot). Should be at least 8 characters long.
+    Type: String
+    NoEcho: true
+    Default: " "
+  DBMultiAZ:
+    Description: >-
+      Specifies if the database instance is deployed to multiple Availability
+      Zones for HA.
+    Type: String
+    Default: false
+    AllowedValues:
+    - true
+    - false
+
+  EksBaseVersion:
+    Type: String
+    Description: Specify the base EKS version to use. The AMI parameter should match this base version.
+    Default: "1.34"
+  EksAmi:
+    Type: String
+    Description: Eks worker nodes AMI. Use the AMI specific to the region and eks base version.
+    Default: " "
+  EksImageIdSSMParam:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Description: SSM parameter to resolve latest AMI to use for specified EKS version
+    Default: "/aws/service/eks/optimized-ami/1.34/amazon-linux-2023/x86_64/standard/recommended/image_id"
+  EksImageIdSSMParamARM:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Description: SSM parameter to resolve latest arm64 AMI to use for specified EKS version
+    Default: "/aws/service/eks/optimized-ami/1.34/amazon-linux-2023/arm64/standard/recommended/image_id"
+  DisableIMDSv1:
+    Type: String
+    Default: true
+    AllowedValues:
+    - false
+    - true
+  MinSharedServicesNodeCount:
+    Type: Number
+    Description: Minimum number of EC2 instances that are required to be maintained for shared services
+    Default: "1"
+    MinValue: 1
+  DesiredSharedServicesNodeCount:
+    Type: Number
+    Description: Desired number of EC2 instances that are required to be maintained for shared services
+    Default: "1"
+    MinValue: 1
+  MaxSharedServicesNodeCount:
+    Type: Number
+    Description: Maximum number of EC2 instances that are allowed to spin up for shared services
+    Default: "10"
+  MinComputeNodeCount:
+    Type: Number
+    Description: Minimum number of EC2 instances that are required to be maintained for compute clusters
+    Default: "0"
+    MinValue: 0
+  DesiredComputeNodeCount:
+    Type: Number
+    Description: Desired number of EC2 instances that are required to be maintained for compute clusters
+    Default: "0"
+    MinValue: 0
+  MaxComputeNodeCount:
+    Type: Number
+    Description: Maximum number of EC2 instances that are allowed to spin up for compute clusters
+    Default: "20"
+  SharedServicesNodeInstanceType:
+    Description: EC2 instance type for the node instances
+    Type: String
+    Default: "m5.2xlarge"
+    AllowedValues:
+    - m5.2xlarge
+    ConstraintDescription: Must be a valid EC2 instance type
+  SpotInstancesEnabled:
+    Description: Whether to enable spot instances for compute ASG
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - true
+      - false
+  SpotPrice:
+    Description: Spot Price (Only Spot market price is charged, up to max of On-Demand price. Value here is only used to prevent EC2 instance launch if Spot market price exceeds this value.)
+    Type: String
+    Default: "1"
+  ComputeNodeInstanceType:
+    Description: EC2 instance type for the node instances
+    Type: String
+    Default: "r5d.4xlarge"
+  DevModeEnabled:
+    Description: Cluster enable dev mode or not
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - true
+      - false
+  DevModeComputeNodeInstanceType:
+    Description: EC2 instance type for the node instances under DEV mode
+    Type: String
+    Default: "m5d.4xlarge"
+    AllowedValues:
+      - m5d.xlarge
+      - m5d.4xlarge
+    ConstraintDescription: Must be a valid EC2 instance type
+  NodeVolumeSize:
+    Type: Number
+    Description: Per node volume size
+    Default: 40
+  EncryptionKeyARN:
+    Type: String
+    Description: ARN of CMK to be used for encrypting EFS, EBS, RDS and EKS Secrets
+    Default: ''
+  RoleARN:
+    Type: String
+    Description: 'RoleARN to add to KMS Key policy as principal'
+    Default: " "
+
+Mappings:
+  PartitionMap:
+    aws:
+      EC2ServicePrincipal: "ec2.amazonaws.com"
+    aws-us-gov:
+      EC2ServicePrincipal: "ec2.amazonaws.com"
+    aws-cn:
+      EC2ServicePrincipal: "ec2.amazonaws.com.cn"
+    aws-iso:
+      EC2ServicePrincipal: "ec2.c2s.ic.gov"
+    aws-iso-b:
+      EC2ServicePrincipal: "ec2.sc2s.sgov.gov"
+  Common:
+    UserData:
+      Value: |
+        #!/bin/bash
+        set -o xtrace
+        x=""
+        declare -i bnum=0
+        for i in $(seq 0 26); do
+          [ $bnum -lt 4 ]|| break
+          [ -e /dev/nvme${i}n1 ] || continue
+          model_file="/sys/block/nvme${i}n1/device/model"
+          if [ -r "$model_file" ] && grep -qi "Instance Storage" "$model_file"; then
+            bnum+=1
+            x+=" /dev/nvme${i}n1"
+          fi
+        done
+        if [ -n "$x" ]
+        then
+          yes | sudo pvcreate $x
+          yes | sudo vgcreate nvmevg $x
+          yes | sudo lvcreate -l 100%FREE nvmevg -n nvmelv
+          yes | sudo mkfs.xfs -f /dev/nvmevg/nvmelv
+          sudo mkdir -p /data
+          sudo mount /dev/nvmevg/nvmelv /data
+          sudo chown 1000:1000 /data
+          sudo chmod 777 /data
+          sudo mkdir -p /data/remote-buffer
+          sudo mkdir -p /data/local-scratch
+          sudo chmod -R 777 /data/remote-buffer
+          sudo chmod -R 777 /data/local-scratch
+        fi
+
+        # for async profiler to work
+        sudo bash -c 'echo 1 > /proc/sys/kernel/perf_event_paranoid'
+        sudo bash -c 'echo 0 > /proc/sys/kernel/kptr_restrict'
+
+        sudo sysctl vm.swappiness=0
+        
+        # set THP to madvise to allow opt-in huge pages
+        if test -f /sys/kernel/mm/transparent_hugepage/enabled; then
+           sudo bash -c 'echo madvise > /sys/kernel/mm/transparent_hugepage/enabled'
+        fi
+        if test -f /sys/kernel/mm/transparent_hugepage/defrag; then
+           sudo bash -c 'echo madvise > /sys/kernel/mm/transparent_hugepage/defrag'
+        fi
+
+    ExtraArgs:
+      # --node-status-update-frequency=1m -- K8s sets this to default 1m in 1.15 (10s used to be old default). As a result, nodes become ready only after 1m.
+      # https://v1-15.docs.kubernetes.io/docs/concepts/architecture/nodes/#node-controller and https://github.com/kubernetes-sigs/kubespray/blob/master/docs/kubernetes-reliability.md
+      # --node-status-update-frequency=1m and --node-monitor-grace-period=40s can be reduced to lower value if faster NodeReady time needs to be achieved.
+      # --node-status-update-frequency is kubelet config but --node-monitor-grace-period is controller manager config which cannot be configured for EKS.
+      # So with the current defaults, we cannot go below 1m for the node to become Ready. --node-status-update-frequency can be set to 40s if we want to shave off 20s
+      # but we don't want to mess with system stability for now. This is a change in behaviour from older 1.13 clusters where node will become ready in 10s.
+      # There is also a bug that will ignore lower --node-status-update-frequency and is fixed/backported to 1.15 https://github.com/kubernetes/kubernetes/issues/80172
+      # TODO: For future tweaking, to reduce NodeReady time --feature-gates=DynamicKubeletConfig=true is added so that above intervals can be dynamically adjusted
+      # TODO: For future tweaking, --kube-reserved defaults to 9.1GB for r5d.4xlarge instance which is a lot as compute only deals with very few pods. Changing it can
+      # provide more memory for query executors.
+      # TODO: When dynamic KubeletConfig works, migrate all the kubelet extra-args to configuration file
+      # --cluster-dns=169.254.20.10 is required for NodeLocalDNS
+      # Remove --feature-gates=DynamicKubeletConfig=true as in 1.24 Error: cannot set feature gate DynamicKubeletConfig to true, feature is locked to false
+      ComputeNodeGroup: "'--cluster-dns=169.254.20.10 --max-pods=15 --cpu-cfs-quota=false --node-labels=compute=true,computeId=unassigned,node.kubernetes.io/compute=role,lifecycle=on-demand --register-with-taints=computeId=unassigned:NoSchedule'"
+      DevModeComputeNodeGroup: "'--cluster-dns=169.254.20.10 --allowed-unsafe-sysctls net.core.somaxconn,net.ipv4.tcp_max_syn_backlog,net.ipv4.tcp_fin_timeout --max-pods=15 --cpu-cfs-quota=false --node-labels=devcompute=true,computeId=unassigned,node.kubernetes.io/dev-compute=role --register-with-taints=computeId=unassigned:NoSchedule'"
+      SharedServicesNodeGroup: "'--cluster-dns=169.254.20.10 --allowed-unsafe-sysctls net.core.somaxconn,net.ipv4.tcp_max_syn_backlog,net.ipv4.tcp_fin_timeout --max-pods=25 --cpu-cfs-quota=false --node-labels=sharedServices=sharedServices,node.kubernetes.io/shared-services=role,lifecycle=on-demand'"
+      SpotComputeNodeGroup: "'--cluster-dns=169.254.20.10 --allowed-unsafe-sysctls net.core.somaxconn,net.ipv4.tcp_max_syn_backlog,net.ipv4.tcp_fin_timeout --max-pods=15 --cpu-cfs-quota=false --node-labels=compute=true,computeId=unassigned,node.kubernetes.io/spot-compute=role,lifecycle=ec2-spot --register-with-taints=computeId=unassigned:NoSchedule'"
+    ProxyData:
+      Value: |
+        #!/bin/bash
+        set -x
+        
+        # Create the containerd and sandbox-image systemd directory
+        mkdir -p /etc/systemd/system/containerd.service.d
+        mkdir -p /etc/systemd/system/sandbox-image.service.d
+
+        #Configure yum to use the proxy
+        cloud-init-per instance yum_proxy_config cat << EOF >> /etc/yum.conf
+        proxy=$PROXY
+        EOF
+
+        #Set the proxy for future processes, and use as an include file
+        cloud-init-per instance proxy_config cat << EOF >> /etc/environment
+        http_proxy=$PROXY
+        https_proxy=$PROXY
+        HTTP_PROXY=$PROXY
+        HTTPS_PROXY=$PROXY
+        no_proxy=$NOPROXY
+        NO_PROXY=$NOPROXY
+        EOF
+
+        set -a
+        source /etc/environment
+
+        #Configure containerd with the proxy
+        cloud-init-per instance containerd_proxy_config tee <<EOF /etc/systemd/system/containerd.service.d/http-proxy.conf >/dev/null
+        [Service]
+        EnvironmentFile=/etc/environment
+        EOF
+
+        # Configure sandbox-image with the proxy
+        cloud-init-per instance sandbox-image_proxy_config tee <<EOF /etc/systemd/system/sandbox-image.service.d/http-proxy.conf >/dev/null
+        [Service]
+        EnvironmentFile=/etc/environment
+        EOF
+
+        # Configure the kubelet with the proxy
+        cloud-init-per instance kubelet_proxy_config tee <<EOF /etc/systemd/system/kubelet.service.d/proxy.conf >/dev/null
+        [Service]
+        EnvironmentFile=/etc/environment
+        EOF
+
+        # Reload the daemon/containerd to reflect proxy configuration at launch of instance
+        cloud-init-per instance reload_daemon systemctl daemon-reload
+        cloud-init-per instance reload_containerd systemctl restart --now --no-block containerd
+
+Conditions:
+  HasNodeImageId: !Not
+  - !Equals
+    - Ref: EksAmi
+    - ''
+  IMDSv1Disabled: !Equals
+    - Ref: DisableIMDSv1
+    - 'true'
+  HasDBSnapshotIdentifier: !Not
+  - !Equals
+    - Ref: DBSnapshotIdentifier
+    - ''
+  HasRoleARN: !Not
+  - !Equals
+    - Ref: RoleARN
+    - ''
+  CreateVPC: !Equals
+    - Ref: CustomVpc
+    - ''
+  UseProxy: !Equals
+    - Ref: UseProxy
+    - 'true'
+  DevModeEnabled: !Equals
+    - Ref: DevModeEnabled
+    - 'true'
+  SpotInstancesEnabled: !Equals
+    - Ref: SpotInstancesEnabled
+    - 'true'
+  CreateEFSMountSubnet3: !Equals
+    - Ref: SkipEFSMountSubnet3
+    - 'false'
+  EncryptionKeyNotSpecified: !Equals 
+    - Ref: EncryptionKeyARN
+    - ''
+  # SkipNodeRoleCreation: Always evaluates to false, used to conditionally prevent NodeInstanceRole creation
+  # Applied when NodeInstanceRoleName is provided (existing role scenario)
+  SkipNodeRoleCreation: !Equals
+    - 'true'
+    - 'false'
+
+# If new resources are added or if new permissions/actions are needed for a Resource,
+# not included in https://github.com/hortonworks/cloudbreak/blob/master/cloud-aws-common/src/main/resources/definitions/aws-cb-policy.json,
+# then create a TSB like https://jira.cloudera.com/browse/TSB-619
+# Additionally if they are not included in either of the files under
+# https://github.com/cloudera/cdw-cloud-policies/tree/main/aws-iam-policies/docs then create a PR to include the new action in that repo
+
+Resources:
+  KMSKey:
+    Type: AWS::KMS::Key
+    Condition: EncryptionKeyNotSpecified
+    Properties:
+      EnableKeyRotation: true
+      PendingWindowInDays: 30
+      Description: "KMS key used for all at-rest (RDS, S3, EBS, EFS) resources provisioned by dwx"
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: !Sub '${AWS::StackName}-kms-key'
+        Statement:
+          - Sid: Allow administration of the key
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+                - !If [HasRoleARN, !Ref RoleARN, !Ref "AWS::NoValue"]
+                - !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling'
+            Action:
+              - 'kms:*'
+            Resource: '*'
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-kms-key'
+
+  KMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Condition: EncryptionKeyNotSpecified
+    DependsOn: KMSKey
+    Properties:
+      AliasName: !Sub 'alias/${AWS::StackName}-kms-key'
+      TargetKeyId: !Ref KMSKey
+
+  EFS:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      KmsKeyId: !If [EncryptionKeyNotSpecified, !GetAtt KMSKey.Arn, !Ref EncryptionKeyARN]
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-efs'
+      FileSystemPolicy:
+        Version: '2012-10-17'
+        Id: EfsInTransitEncryption
+        Statement:
+          - Sid: EfsClientAccess
+            Effect: Allow
+            Principal:
+              AWS: "*"
+            Action:
+              - elasticfilesystem:ClientRootAccess
+              - elasticfilesystem:ClientWrite
+              - elasticfilesystem:ClientMount
+            Condition:
+              Bool:
+                elasticfilesystem:AccessedViaMountTarget: 'true'
+          - Sid: EfsSecureTransport
+            Effect: Deny
+            Principal:
+              AWS: "*"
+            Action: "*"
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
+  EFSMountTarget1:
+    DependsOn: NodeSecurityGroup
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFS
+      SubnetId: !If [CreateVPC, !Ref PrivateSubnet1, !Ref CustomSubnet1]
+      SecurityGroups:
+        - !Ref NodeSecurityGroup
+
+  EFSMountTarget2:
+    DependsOn: NodeSecurityGroup
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFS
+      SubnetId: !If [CreateVPC, !Ref PrivateSubnet2, !Ref CustomSubnet2]
+      SecurityGroups:
+        - !Ref NodeSecurityGroup
+
+  EFSMountTarget3:
+    DependsOn: NodeSecurityGroup
+    Type: AWS::EFS::MountTarget
+    Condition: CreateEFSMountSubnet3
+    Properties:
+      FileSystemId: !Ref EFS
+      SubnetId: !If [CreateVPC, !Ref PrivateSubnet3, !Ref CustomSubnet3]
+      SecurityGroups:
+        - !Ref NodeSecurityGroup
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Condition: CreateVPC
+    Properties:
+      CidrBlock:  !Ref VpcCIDRBlock
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-vpc'
+      - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+        Value: 'shared'
+
+  InternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    Condition: CreateVPC
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-igw'
+
+  VPCGatewayAttachment:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Condition: CreateVPC
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateVPC
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-public-route-table'
+      - Key: Network
+        Value: Public
+
+  PublicRoute:
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::Route
+    Condition: CreateVPC
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateVPC
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-private-route-table-1'
+        - Key: Network
+          Value: Private
+
+  PrivateRoute1:
+    DependsOn:
+      - VPCGatewayAttachment
+      - NatGateway1
+    Type: AWS::EC2::Route
+    Condition: CreateVPC
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  NatGateway1:
+    DependsOn:
+      - NatGatewayEIP1
+      - PublicSubnet1
+      - VPCGatewayAttachment
+    Type: AWS::EC2::NatGateway
+    Condition: CreateVPC
+    Properties:
+      AllocationId: !GetAtt 'NatGatewayEIP1.AllocationId'
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-nat-gateway-1'
+
+  NatGatewayEIP1:
+    DependsOn:
+      - VPCGatewayAttachment
+    Type: 'AWS::EC2::EIP'
+    Condition: CreateVPC
+    Properties:
+      Domain: vpc
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName}-eip-nat-gw-1"
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateVPC
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-private-route-table-2'
+        - Key: Network
+          Value: Private
+
+  PrivateRoute2:
+    DependsOn:
+      - VPCGatewayAttachment
+      - NatGateway2
+    Type: AWS::EC2::Route
+    Condition: CreateVPC
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+
+  NatGateway2:
+    DependsOn:
+      - NatGatewayEIP2
+      - PublicSubnet2
+      - VPCGatewayAttachment
+    Type: AWS::EC2::NatGateway
+    Condition: CreateVPC
+    Properties:
+      AllocationId: !GetAtt 'NatGatewayEIP2.AllocationId'
+      SubnetId: !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-nat-gateway-2'
+
+  NatGatewayEIP2:
+    DependsOn:
+      - VPCGatewayAttachment
+    Type: 'AWS::EC2::EIP'
+    Condition: CreateVPC
+    Properties:
+      Domain: vpc
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName}-eip-nat-gw-2"
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Condition: CreateVPC
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - '0'
+          - Fn::GetAZs:
+              Ref: AWS::Region
+      CidrBlock:
+        Ref: PublicSubnetCIDRBlock1
+      MapPublicIpOnLaunch: true
+      VpcId:
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-subnet-1"
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+        - Key: "kubernetes.io/role/elb"
+          Value: "1"
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: CreateVPC
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - '1'
+          - Fn::GetAZs:
+              Ref: AWS::Region
+      CidrBlock:
+        Ref: PublicSubnetCIDRBlock2
+      MapPublicIpOnLaunch: true
+      VpcId:
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-subnet-2"
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+        - Key: "kubernetes.io/role/elb"
+          Value: "1"
+
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Condition: CreateVPC
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - '2'
+          - Fn::GetAZs:
+              Ref: AWS::Region
+      CidrBlock:
+        Ref: PublicSubnetCIDRBlock3
+      MapPublicIpOnLaunch: true
+      VpcId:
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-subnet-3"
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+        - Key: "kubernetes.io/role/elb"
+          Value: "1"
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Condition: CreateVPC
+    Metadata:
+      Comment: Private Subnet 1
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+        - '0'
+        - Fn::GetAZs:
+            Ref: AWS::Region
+      CidrBlock:
+        Ref: PrivateSubnetCIDRBlock1
+      MapPublicIpOnLaunch: false
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName}-private-subnet-1"
+      - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+        Value: 'shared'
+      - Key: "kubernetes.io/role/internal-elb"
+        Value: "1"
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: CreateVPC
+    Metadata:
+      Comment: Private Subnet 2
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+        - '1'
+        - Fn::GetAZs:
+            Ref: AWS::Region
+      CidrBlock:
+        Ref: PrivateSubnetCIDRBlock2
+      MapPublicIpOnLaunch: false
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName}-private-subnet-2"
+      - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+        Value: 'shared'
+      - Key: "kubernetes.io/role/internal-elb"
+        Value: "1"
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Condition: CreateVPC
+    Metadata:
+      Comment: Private Subnet 3
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+        - '2'
+        - Fn::GetAZs:
+            Ref: AWS::Region
+      CidrBlock:
+        Ref: PrivateSubnetCIDRBlock3
+      MapPublicIpOnLaunch: false
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName}-private-subnet-3"
+      - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+        Value: 'shared'
+      - Key: "kubernetes.io/role/internal-elb"
+        Value: "1"
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateVPC
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateVPC
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateVPC
+    Properties:
+      SubnetId: !Ref PublicSubnet3
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateVPC
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable1
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateVPC
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable2
+
+  PrivateSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateVPC
+    Properties:
+      SubnetId: !Ref PrivateSubnet3
+      RouteTableId: !Ref PrivateRouteTable2
+
+  ClusterControlPlaneSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Cluster communication with worker nodes
+      VpcId: !If [CreateVPC, !Ref VPC, !Ref CustomVpc]
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName}-cluster-control-plane-sg"
+
+  EKSServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - eks.amazonaws.com
+          Action:
+          - 'sts:AssumeRole'
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/AmazonEKSServicePolicy'
+      - 'arn:aws:iam::aws:policy/AmazonEKSClusterPolicy'
+
+  S3VPCEndpoint:
+    Type: "AWS::EC2::VPCEndpoint"
+    Condition: CreateVPC
+    Properties:
+      RouteTableIds:
+        - !Ref PublicRouteTable
+        - !Ref PrivateRouteTable1
+        - !Ref PrivateRouteTable2
+      ServiceName:
+        !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcId: !Ref VPC
+
+  DatabaseSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: !Ref 'AWS::StackName'
+      VpcId: !If [CreateVPC, !Ref VPC, !Ref CustomVpc]
+      SecurityGroupIngress:
+      - CidrIp: 10.20.0.0/16
+        FromPort: 5432
+        IpProtocol: tcp
+        ToPort: 5432
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName}-db-sg"
+
+  DBSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupDescription: !Ref 'AWS::StackName'
+      SubnetIds:
+      - !If [CreateVPC, !Ref PrivateSubnet1, !Ref CustomSubnet1]
+      - !If [CreateVPC, !Ref PrivateSubnet2, !Ref CustomSubnet2]
+      - !If [CreateVPC, !Ref PrivateSubnet3, !Ref CustomSubnet3]
+
+  RDSDBParameterGroup:
+    Type: 'AWS::RDS::DBParameterGroup'
+    Properties:
+      DBParameterGroupName: !Sub '${AWS::StackName}-rds-parameter-group'
+      Description: CloudFormation CDW RDS Parameter Group
+      Family: postgres16
+      Parameters:
+        rds.force_ssl: 1
+
+  DBInstance:
+    DependsOn:
+      - RDSDBParameterGroup
+    Type: 'AWS::RDS::DBInstance'
+    DeletionPolicy: "Snapshot"
+    Properties:
+      DBInstanceIdentifier: !Sub '${AWS::StackName}-rds'
+      AllocatedStorage: !If
+      - HasDBSnapshotIdentifier
+      - !Ref 'AWS::NoValue'
+      - !Ref DBAllocatedStorage
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: true
+      BackupRetentionPeriod: !Ref DBBackupRetentionPeriod
+      CopyTagsToSnapshot: true
+      DBInstanceClass: !If
+      - HasDBSnapshotIdentifier
+      - !Ref 'AWS::NoValue'
+      - !Ref DBInstanceClass
+      DBName: !If
+      - HasDBSnapshotIdentifier
+      - !Ref 'AWS::NoValue'
+      - !Ref DBName
+      DBParameterGroupName: !Ref RDSDBParameterGroup
+      DBSnapshotIdentifier: !If
+      - HasDBSnapshotIdentifier
+      - !Ref DBSnapshotIdentifier
+      - !Ref 'AWS::NoValue'
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      Engine: !If
+      - HasDBSnapshotIdentifier
+      - !Ref 'AWS::NoValue'
+      - postgres
+      EngineVersion: !If
+      - HasDBSnapshotIdentifier
+      - !Ref 'AWS::NoValue'
+      - 16
+      MasterUsername: !If
+      - HasDBSnapshotIdentifier
+      - !Ref 'AWS::NoValue'
+      - !Ref DBMasterUsername
+      MasterUserPassword: !If
+      - HasDBSnapshotIdentifier
+      - !Ref 'AWS::NoValue'
+      - !Ref DBMasterUserPassword
+      MultiAZ: !Ref DBMultiAZ
+      PreferredBackupWindow: '01:00-01:30'
+      PreferredMaintenanceWindow: 'sun:03:00-sun:03:30'
+      StorageType: gp3
+      StorageEncrypted: !If
+        - HasDBSnapshotIdentifier
+        - !Ref 'AWS::NoValue'
+        - true
+      KmsKeyId: !If [EncryptionKeyNotSpecified, !GetAtt KMSKey.Arn, !Ref EncryptionKeyARN]
+      VPCSecurityGroups:
+      - !Ref DatabaseSecurityGroup
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-rds'
+
+  EKSCluster:
+    Type: "AWS::EKS::Cluster"
+    Properties:
+      Name: !Sub '${AWS::StackName}-eks'
+      EncryptionConfig:
+        - Provider:
+           KeyArn: !If [EncryptionKeyNotSpecified, !GetAtt KMSKey.Arn, !Ref EncryptionKeyARN]
+          Resources:
+          - secrets
+      ResourcesVpcConfig:
+        SecurityGroupIds:
+        - !Ref ClusterControlPlaneSecurityGroup
+        SubnetIds: !If [CreateVPC, [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3, !Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3], !Split [",", !Ref CustomSubnets]]
+        EndpointPublicAccess: true
+        EndpointPrivateAccess: true
+        PublicAccessCidrs: !Split [",", !Ref PublicAccessCidrs]
+      RoleArn: !GetAtt EKSServiceRole.Arn
+      Version: !Ref EksBaseVersion
+
+  NodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+      - !Ref NodeInstanceRole
+
+  # NodeInstanceRole is created ONLY when NodeInstanceRoleName is NOT provided
+  # When NodeInstanceRoleName is provided, SkipNodeRoleCreation condition prevents creation
+  NodeInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - !FindInMap [PartitionMap, !Ref "AWS::Partition", EC2ServicePrincipal]
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+      
+      - arn:aws:iam::176355978580:policy/bri-shashank-datalake-backup-policy
+      
+      - arn:aws:iam::176355978580:policy/bri-shashank-data-bucket-access-policy
+      
+      - arn:aws:iam::176355978580:policy/bri-shashank-backup-bucket-access-policy
+      
+      - arn:aws:iam::176355978580:policy/bri-shashank-datalake-restore-policy
+      
+      - arn:aws:iam::176355978580:policy/bri-shashank-dladmin-policy
+      
+      - arn:aws:iam::176355978580:policy/bri-shashank-log-bucket-access-policy
+      
+      - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+      - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+      - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+# If new actions are added then create a PR to include the new action at https://github.com/cloudera/cdw-cloud-policies/blob/main/aws-iam-policies/managedArn-node-inline-policy.json
+      Policies:
+      - PolicyName: 'cluster-autoscaler'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - autoscaling:DescribeAutoScalingGroups
+            - autoscaling:DescribeAutoScalingInstances
+            - autoscaling:DescribeTags
+            - autoscaling:DescribeLaunchConfigurations
+            - autoscaling:DescribeScalingActivities
+            - autoscaling:SetDesiredCapacity
+            - autoscaling:TerminateInstanceInAutoScalingGroup
+            - ec2:DescribeLaunchTemplateVersions
+            - ec2:CreateTags
+            Resource:
+            - "*"
+      - PolicyName: 'limits-monitoring'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - servicequotas:ListServiceQuotas
+            - elasticloadbalancing:DescribeAccountLimits
+            - elasticloadbalancing:DescribeLoadBalancers
+            - rds:DescribeAccountAttributes
+            - rds:DescribeDBInstances
+            - rds:DescribeDBSnapshots
+            Resource:
+              - "*"
+      - PolicyName: 'efs'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - elasticfilesystem:DescribeAccessPoints
+                - elasticfilesystem:DescribeFileSystems
+                - elasticfilesystem:DescribeMountTargets
+                - ec2:DescribeAvailabilityZones
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - elasticfilesystem:CreateAccessPoint
+              Resource: "*"
+              Condition:
+                StringLike:
+                  aws:RequestTag/efs.csi.aws.com/cluster: 'true'
+            - Effect: Allow
+              Action:
+               - elasticfilesystem:TagResource
+              Resource: "*"
+              Condition:
+                StringLike:
+                  aws:ResourceTag/efs.csi.aws.com/cluster: 'true'
+            - Effect: Allow
+              Action: elasticfilesystem:DeleteAccessPoint
+              Resource: "*"
+              Condition:
+                StringEquals:
+                  aws:ResourceTag/efs.csi.aws.com/cluster: 'true'
+      - PolicyName: 'kms'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - kms:Encrypt
+                - kms:Decrypt
+                - kms:GenerateDatakey
+                - kms:ListAliases
+                - kms:DescribeKey
+              Resource:
+                - "*"
+      - PolicyName: 'ebs'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - ec2:CreateSnapshot
+            - ec2:AttachVolume
+            - ec2:DetachVolume
+            - ec2:ModifyVolume
+            - ec2:DescribeAvailabilityZones
+            - ec2:DescribeInstances
+            - ec2:DescribeSnapshots
+            - ec2:DescribeTags
+            - ec2:DescribeVolumes
+            - ec2:DescribeVolumesModifications
+            Resource: "*"
+          - Effect: Allow
+            Action:
+            - ec2:CreateTags
+            Resource:
+            - arn:aws:ec2:*:*:volume/*
+            - arn:aws:ec2:*:*:snapshot/*
+            Condition:
+              StringEquals:
+                ec2:CreateAction:
+                - CreateVolume
+                - CreateSnapshot
+          - Effect: Allow
+            Action:
+            - ec2:DeleteTags
+            Resource:
+            - arn:aws:ec2:*:*:volume/*
+            - arn:aws:ec2:*:*:snapshot/*
+          - Effect: Allow
+            Action:
+            - ec2:CreateVolume
+            Resource: "*"
+            Condition:
+              StringLike:
+                aws:RequestTag/ebs.csi.aws.com/cluster: 'true'
+          - Effect: Allow
+            Action:
+            - ec2:CreateVolume
+            Resource: "*"
+            Condition:
+              StringLike:
+                aws:RequestTag/CSIVolumeName: "*"
+          - Effect: Allow
+            Action:
+            - ec2:CreateVolume
+            Resource: "*"
+            Condition:
+              StringLike:
+                aws:RequestTag/kubernetes.io/cluster/*: owned
+          - Effect: Allow
+            Action:
+            - ec2:DeleteVolume
+            Resource: "*"
+            Condition:
+              StringLike:
+                ec2:ResourceTag/ebs.csi.aws.com/cluster: 'true'
+          - Effect: Allow
+            Action:
+            - ec2:DeleteVolume
+            Resource: "*"
+            Condition:
+              StringLike:
+                ec2:ResourceTag/CSIVolumeName: "*"
+          - Effect: Allow
+            Action:
+            - ec2:DeleteVolume
+            Resource: "*"
+            Condition:
+              StringLike:
+                ec2:ResourceTag/kubernetes.io/cluster/*: owned
+          - Effect: Allow
+            Action:
+            - ec2:DeleteSnapshot
+            Resource: "*"
+            Condition:
+              StringLike:
+                ec2:ResourceTag/CSIVolumeSnapshotName: "*"
+          - Effect: Allow
+            Action:
+            - ec2:DeleteSnapshot
+            Resource: "*"
+            Condition:
+              StringLike:
+                ec2:ResourceTag/ebs.csi.aws.com/cluster: 'true'
+          - Effect: Allow
+            Action:
+            - kms:Decrypt
+            - kms:GenerateDataKeyWithoutPlaintext
+            - kms:CreateGrant
+            Resource: "*"
+      # Add condition may be based on tag?
+      - PolicyName: 'external-secrets'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: "*"
+        # If new Resources are added to the list, update them in addBucketsToInstanceRole to be in sync
+      - PolicyName: 's3-read-write-own-buckets'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:Get*
+            - s3:Delete*
+            - s3:Put*
+            - s3:ListBucketMultipartUploads
+            - s3:AbortMultipartUpload
+            Resource:
+            - !Sub "arn:aws:s3:::${LogBucket}/clusters"
+            - !Sub "arn:aws:s3:::${LogBucket}/clusters/*"
+            - !Sub "arn:aws:s3:::${SdxS3Bucket}/clusters"
+            - !Sub "arn:aws:s3:::${SdxS3Bucket}/clusters/*"
+            - !Sub "arn:aws:s3:::${LogBucketLocation}"
+            - !Sub "arn:aws:s3:::${LogBucketLocation}/*"
+            - !Sub "arn:aws:s3:::${BackupBucketLocation}"
+            - !Sub "arn:aws:s3:::${BackupBucketLocation}/*"
+            - !Sub "arn:aws:s3:::${SdxStorageBaseLocation}"
+            - !Sub "arn:aws:s3:::${SdxStorageBaseLocation}/*"
+            - !Sub "arn:aws:s3:::${SdxS3Bucket}/backup"
+            - !Sub "arn:aws:s3:::${SdxS3Bucket}/backup/*"
+            - !Sub "arn:aws:s3:::${SdxS3Bucket}/tmp"
+            - !Sub "arn:aws:s3:::${SdxS3Bucket}/tmp/*"
+            - !Sub "arn:aws:s3:::${SdxS3Bucket}/scratch"
+            - !Sub "arn:aws:s3:::${SdxS3Bucket}/scratch/*"
+      - PolicyName: 's3-list-bucket'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+                - s3:GetBucketLocation
+              Resource:
+                - !Sub "arn:aws:s3:::${SdxS3Bucket}"
+                - !Sub "arn:aws:s3:::${LogBucket}"
+                - !Sub "arn:aws:s3:::${BackupBucket}"
+
+  NodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for all nodes in the cluster
+      VpcId: !If [CreateVPC, !Ref VPC, !Ref CustomVpc]
+      Tags:
+      - Key: !Sub "kubernetes.io/cluster/${AWS::StackName}-eks"
+        Value: 'shared'
+      - Key: Name
+        Value: !Sub "${AWS::StackName}-worker-nodes-sg"
+
+  NodeSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow node to communicate with each other
+      GroupId: !Ref NodeSecurityGroup
+      SourceSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: '-1'
+      FromPort: 0
+      ToPort: 65535
+  FreeIpaSecurityGroupIngress0:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ClusterControlPlaneSecurityGroup
+      SourceSecurityGroupId: sg-0a1ca3577a5fb5dda
+      IpProtocol: '-1'
+
+  FreeIpaSecurityGroupEgress0:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref ClusterControlPlaneSecurityGroup
+      DestinationSecurityGroupId: sg-0a1ca3577a5fb5dda
+      IpProtocol: '-1'
+
+  NodeSecurityGroupFromControlPlaneIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow worker Kubelets and pods to receive communication from the cluster control plane
+      GroupId: !Ref NodeSecurityGroup
+      SourceSecurityGroupId: !Ref ClusterControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 1025
+      ToPort: 65535
+
+  ControlPlaneEgressToNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroupEgress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow the cluster control plane to communicate with worker Kubelet and pods
+      GroupId: !Ref ClusterControlPlaneSecurityGroup
+      DestinationSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: tcp
+      FromPort: 1025
+      ToPort: 65535
+
+  NodeSecurityGroupFromControlPlaneOn443Ingress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow pods running extension API servers on port 443 to receive communication from cluster control plane
+      GroupId: !Ref NodeSecurityGroup
+      SourceSecurityGroupId: !Ref ClusterControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+
+  ControlPlaneEgressToNodeSecurityGroupOn443:
+    Type: AWS::EC2::SecurityGroupEgress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow the cluster control plane to communicate with pods running extension API servers on port 443
+      GroupId: !Ref ClusterControlPlaneSecurityGroup
+      DestinationSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+
+  ClusterControlPlaneSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: NodeSecurityGroup
+    Properties:
+      Description: Allow pods to communicate with the cluster API Server
+      GroupId: !Ref ClusterControlPlaneSecurityGroup
+      SourceSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: tcp
+      ToPort: 443
+      FromPort: 443
+
+  SharedServicesNodeGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: "env-6l77vh-dwx-stack-eks-shared-services-asg"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref SharedServicesNodeLaunchTemplate
+        Version: !GetAtt 'SharedServicesNodeLaunchTemplate.LatestVersionNumber'
+      MinSize: !Ref MinSharedServicesNodeCount
+      MaxSize: !Ref MaxSharedServicesNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredSharedServicesNodeCount
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet1, !Ref CustomSubnet1]
+        - !If [CreateVPC, !Ref PrivateSubnet2, !Ref CustomSubnet2]
+        - !If [CreateVPC, !Ref PrivateSubnet3, !Ref CustomSubnet3]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-shared-services-node"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/sharedServices"
+          Value: 'sharedServices'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  DevComputePlacementGroup:
+    Type: AWS::EC2::PlacementGroup
+    Condition: DevModeEnabled
+    Properties:
+      Strategy: cluster
+  ComputePlacementGroupSubnet1r5d4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  ComputePlacementGroupSubnet2r5d4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  ComputePlacementGroupSubnet3r5d4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  SpotComputePlacementGroupSubnet1r5d4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  SpotComputePlacementGroupSubnet2r5d4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  SpotComputePlacementGroupSubnet3r5d4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  LaunchTemplateSubnet1r5d4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-compute-subnet-1-launch-template-r5d.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !If [HasNodeImageId, !Ref EksAmi, !Ref EksImageIdSSMParam]
+        InstanceType: r5d.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+  
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+  
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=lifecycle=on-demand,compute=true,computeId=unassigned,node.kubernetes.io/compute=true,primary-compute-instance-type=${Itype}
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+  
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+  
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: ComputeNodeGroupSubnet1r5d4xlarge
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r5d.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  LaunchTemplateSubnet2r5d4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-compute-subnet-2-launch-template-r5d.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !If [HasNodeImageId, !Ref EksAmi, !Ref EksImageIdSSMParam]
+        InstanceType: r5d.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=lifecycle=on-demand,compute=true,computeId=unassigned,node.kubernetes.io/compute=true,primary-compute-instance-type=${Itype}
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: ComputeNodeGroupSubnet2r5d4xlarge
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r5d.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  LaunchTemplateSubnet3r5d4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-compute-subnet-3-launch-template-r5d.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !If [HasNodeImageId, !Ref EksAmi, !Ref EksImageIdSSMParam]
+        InstanceType: r5d.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=lifecycle=on-demand,compute=true,computeId=unassigned,node.kubernetes.io/compute=true,primary-compute-instance-type=${Itype}
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: ComputeNodeGroupSubnet3r5d4xlarge
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [ UseProxy, !FindInMap [ Common, ProxyData, Value ], '' ]
+                ProxyParameter: !If [ UseProxy, '--https-proxy $PROXY', '' ]
+                ProxyEnvironmentVar: !If [ UseProxy, !Join [ "", [ 'PROXY=', !Ref Proxy ] ], '' ]
+                NoProxyEnvironmentVar: !If [ UseProxy, !Join [ "", [ 'NOPROXY=', !Ref NoProxy ] ], '' ]
+                Itype: r5d.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  ComputeNodeGroupSubnet1r5d4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-compute-subnet-1-r5d.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId:  !Ref LaunchTemplateSubnet1r5d4xlarge
+        Version: !GetAtt 'LaunchTemplateSubnet1r5d4xlarge.LatestVersionNumber'
+      MinSize: !Ref MinComputeNodeCount
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref ComputePlacementGroupSubnet1r5d4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet1, !Ref CustomSubnet1]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-compute-node-subnet-1-r5d.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r5d.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'on-demand'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  ComputeNodeGroupSubnet2r5d4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-compute-subnet-2-r5d.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplateSubnet2r5d4xlarge
+        Version: !GetAtt 'LaunchTemplateSubnet2r5d4xlarge.LatestVersionNumber'
+      MinSize: !Ref MinComputeNodeCount
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref ComputePlacementGroupSubnet2r5d4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet2, !Ref CustomSubnet2]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-compute-node-subnet-2-r5d.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r5d.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'on-demand'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  ComputeNodeGroupSubnet3r5d4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-compute-subnet-3-r5d.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplateSubnet3r5d4xlarge
+        Version: !GetAtt 'LaunchTemplateSubnet3r5d4xlarge.LatestVersionNumber'
+      MinSize: !Ref MinComputeNodeCount
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref ComputePlacementGroupSubnet3r5d4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet3, !Ref CustomSubnet3]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-compute-node-subnet-3-r5d.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r5d.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'on-demand'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  SpotComputeNodeGroupSubnet1r5d4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: SpotInstancesEnabled
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-spot-compute-subnet-1-r5d.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref SpotComputeNodeLaunchTemplateSubnet1r5d4xlarge
+        Version: !GetAtt 'SpotComputeNodeLaunchTemplateSubnet1r5d4xlarge.LatestVersionNumber'
+      MinSize: "0"
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref SpotComputePlacementGroupSubnet1r5d4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet1, !Ref CustomSubnet1]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-spot-compute-node-subnet-1-r5d4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r5d.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'ec2-spot'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  SpotComputeNodeGroupSubnet2r5d4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: SpotInstancesEnabled
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-spot-compute-subnet-2-r5d.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref SpotComputeNodeLaunchTemplateSubnet2r5d4xlarge
+        Version: !GetAtt 'SpotComputeNodeLaunchTemplateSubnet2r5d4xlarge.LatestVersionNumber'
+      Cooldown: 0
+      MinSize: "0"
+      MaxSize: !Ref MaxComputeNodeCount
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref SpotComputePlacementGroupSubnet2r5d4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet2, !Ref CustomSubnet2]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-spot-compute-node-subnet-2-r5d4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r5d.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'ec2-spot'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  SpotComputeNodeGroupSubnet3r5d4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: SpotInstancesEnabled
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-spot-compute-subnet-3-r5d.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref SpotComputeNodeLaunchTemplateSubnet3r5d4xlarge
+        Version: !GetAtt 'SpotComputeNodeLaunchTemplateSubnet3r5d4xlarge.LatestVersionNumber'
+      MinSize: "0"
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref SpotComputePlacementGroupSubnet3r5d4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet3, !Ref CustomSubnet3]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-spot-compute-node-subnet-3-r5d4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r5d.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'ec2-spot'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  SpotComputeNodeLaunchTemplateSubnet1r5d4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Condition: SpotInstancesEnabled
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-spot-compute-subnet-1-launch-template-r5d.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !If [HasNodeImageId, !Ref EksAmi, !Ref EksImageIdSSMParam]
+        InstanceType: r5d.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            MaxPrice: !Ref SpotPrice
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+        
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+        
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=primary-compute-instance-type=${Itype},compute=true,node.kubernetes.io/spot-compute=role,lifecycle=ec2-spot,computeId=unassigned
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+                
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+        
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: SpotComputeNodeGroupSubnet1r5d4xlarge
+                ExtraArgsFromMap: !FindInMap [ Common, ExtraArgs, SpotComputeNodeGroup ]
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r5d.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  SpotComputeNodeLaunchTemplateSubnet2r5d4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Condition: SpotInstancesEnabled
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-spot-compute-subnet-2-launch-template-r5d.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !If [HasNodeImageId, !Ref EksAmi, !Ref EksImageIdSSMParam]
+        InstanceType: r5d.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            MaxPrice: !Ref SpotPrice
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=primary-compute-instance-type=${Itype},compute=true,node.kubernetes.io/spot-compute=role,lifecycle=ec2-spot,computeId=unassigned
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: SpotComputeNodeGroupSubnet2r5d4xlarge
+                ExtraArgsFromMap: !FindInMap [ Common, ExtraArgs, SpotComputeNodeGroup ]
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r5d.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  SpotComputeNodeLaunchTemplateSubnet3r5d4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Condition: SpotInstancesEnabled
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-spot-compute-subnet-3-launch-template-r5d.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !If [HasNodeImageId, !Ref EksAmi, !Ref EksImageIdSSMParam]
+        InstanceType: r5d.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            MaxPrice: !Ref SpotPrice
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=primary-compute-instance-type=${Itype},compute=true,node.kubernetes.io/spot-compute=role,lifecycle=ec2-spot,computeId=unassigned
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: SpotComputeNodeGroupSubnet3r5d4xlarge
+                ExtraArgsFromMap: !FindInMap [ Common, ExtraArgs, SpotComputeNodeGroup ]
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r5d.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+  ComputePlacementGroupSubnet1r6gd4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  ComputePlacementGroupSubnet2r6gd4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  ComputePlacementGroupSubnet3r6gd4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  SpotComputePlacementGroupSubnet1r6gd4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  SpotComputePlacementGroupSubnet2r6gd4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  SpotComputePlacementGroupSubnet3r6gd4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  LaunchTemplateSubnet1r6gd4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-compute-subnet-1-launch-template-r6gd.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !Ref EksImageIdSSMParamARM
+        InstanceType: r6gd.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+  
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+  
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=lifecycle=on-demand,compute=true,computeId=unassigned,node.kubernetes.io/compute=true,primary-compute-instance-type=${Itype}
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+  
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+  
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: ComputeNodeGroupSubnet1r6gd4xlarge
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r6gd.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  LaunchTemplateSubnet2r6gd4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-compute-subnet-2-launch-template-r6gd.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !Ref EksImageIdSSMParamARM
+        InstanceType: r6gd.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=lifecycle=on-demand,compute=true,computeId=unassigned,node.kubernetes.io/compute=true,primary-compute-instance-type=${Itype}
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: ComputeNodeGroupSubnet2r6gd4xlarge
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r6gd.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  LaunchTemplateSubnet3r6gd4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-compute-subnet-3-launch-template-r6gd.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !Ref EksImageIdSSMParamARM
+        InstanceType: r6gd.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=lifecycle=on-demand,compute=true,computeId=unassigned,node.kubernetes.io/compute=true,primary-compute-instance-type=${Itype}
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: ComputeNodeGroupSubnet3r6gd4xlarge
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [ UseProxy, !FindInMap [ Common, ProxyData, Value ], '' ]
+                ProxyParameter: !If [ UseProxy, '--https-proxy $PROXY', '' ]
+                ProxyEnvironmentVar: !If [ UseProxy, !Join [ "", [ 'PROXY=', !Ref Proxy ] ], '' ]
+                NoProxyEnvironmentVar: !If [ UseProxy, !Join [ "", [ 'NOPROXY=', !Ref NoProxy ] ], '' ]
+                Itype: r6gd.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  ComputeNodeGroupSubnet1r6gd4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-compute-subnet-1-r6gd.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId:  !Ref LaunchTemplateSubnet1r6gd4xlarge
+        Version: !GetAtt 'LaunchTemplateSubnet1r6gd4xlarge.LatestVersionNumber'
+      MinSize: !Ref MinComputeNodeCount
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref ComputePlacementGroupSubnet1r6gd4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet1, !Ref CustomSubnet1]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-compute-node-subnet-1-r6gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r6gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'on-demand'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  ComputeNodeGroupSubnet2r6gd4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-compute-subnet-2-r6gd.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplateSubnet2r6gd4xlarge
+        Version: !GetAtt 'LaunchTemplateSubnet2r6gd4xlarge.LatestVersionNumber'
+      MinSize: !Ref MinComputeNodeCount
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref ComputePlacementGroupSubnet2r6gd4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet2, !Ref CustomSubnet2]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-compute-node-subnet-2-r6gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r6gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'on-demand'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  ComputeNodeGroupSubnet3r6gd4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-compute-subnet-3-r6gd.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplateSubnet3r6gd4xlarge
+        Version: !GetAtt 'LaunchTemplateSubnet3r6gd4xlarge.LatestVersionNumber'
+      MinSize: !Ref MinComputeNodeCount
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref ComputePlacementGroupSubnet3r6gd4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet3, !Ref CustomSubnet3]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-compute-node-subnet-3-r6gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r6gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'on-demand'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  SpotComputeNodeGroupSubnet1r6gd4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: SpotInstancesEnabled
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-spot-compute-subnet-1-r6gd.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref SpotComputeNodeLaunchTemplateSubnet1r6gd4xlarge
+        Version: !GetAtt 'SpotComputeNodeLaunchTemplateSubnet1r6gd4xlarge.LatestVersionNumber'
+      MinSize: "0"
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref SpotComputePlacementGroupSubnet1r6gd4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet1, !Ref CustomSubnet1]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-spot-compute-node-subnet-1-r6gd4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r6gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'ec2-spot'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  SpotComputeNodeGroupSubnet2r6gd4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: SpotInstancesEnabled
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-spot-compute-subnet-2-r6gd.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref SpotComputeNodeLaunchTemplateSubnet2r6gd4xlarge
+        Version: !GetAtt 'SpotComputeNodeLaunchTemplateSubnet2r6gd4xlarge.LatestVersionNumber'
+      Cooldown: 0
+      MinSize: "0"
+      MaxSize: !Ref MaxComputeNodeCount
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref SpotComputePlacementGroupSubnet2r6gd4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet2, !Ref CustomSubnet2]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-spot-compute-node-subnet-2-r6gd4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r6gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'ec2-spot'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  SpotComputeNodeGroupSubnet3r6gd4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: SpotInstancesEnabled
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-spot-compute-subnet-3-r6gd.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref SpotComputeNodeLaunchTemplateSubnet3r6gd4xlarge
+        Version: !GetAtt 'SpotComputeNodeLaunchTemplateSubnet3r6gd4xlarge.LatestVersionNumber'
+      MinSize: "0"
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref SpotComputePlacementGroupSubnet3r6gd4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet3, !Ref CustomSubnet3]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-spot-compute-node-subnet-3-r6gd4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r6gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'ec2-spot'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  SpotComputeNodeLaunchTemplateSubnet1r6gd4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Condition: SpotInstancesEnabled
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-spot-compute-subnet-1-launch-template-r6gd.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !Ref EksImageIdSSMParamARM
+        InstanceType: r6gd.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            MaxPrice: !Ref SpotPrice
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+        
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+        
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=primary-compute-instance-type=${Itype},compute=true,node.kubernetes.io/spot-compute=role,lifecycle=ec2-spot,computeId=unassigned
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+                
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+        
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: SpotComputeNodeGroupSubnet1r6gd4xlarge
+                ExtraArgsFromMap: !FindInMap [ Common, ExtraArgs, SpotComputeNodeGroup ]
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r6gd.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  SpotComputeNodeLaunchTemplateSubnet2r6gd4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Condition: SpotInstancesEnabled
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-spot-compute-subnet-2-launch-template-r6gd.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !Ref EksImageIdSSMParamARM
+        InstanceType: r6gd.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            MaxPrice: !Ref SpotPrice
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=primary-compute-instance-type=${Itype},compute=true,node.kubernetes.io/spot-compute=role,lifecycle=ec2-spot,computeId=unassigned
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: SpotComputeNodeGroupSubnet2r6gd4xlarge
+                ExtraArgsFromMap: !FindInMap [ Common, ExtraArgs, SpotComputeNodeGroup ]
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r6gd.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  SpotComputeNodeLaunchTemplateSubnet3r6gd4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Condition: SpotInstancesEnabled
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-spot-compute-subnet-3-launch-template-r6gd.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !Ref EksImageIdSSMParamARM
+        InstanceType: r6gd.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            MaxPrice: !Ref SpotPrice
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=primary-compute-instance-type=${Itype},compute=true,node.kubernetes.io/spot-compute=role,lifecycle=ec2-spot,computeId=unassigned
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: SpotComputeNodeGroupSubnet3r6gd4xlarge
+                ExtraArgsFromMap: !FindInMap [ Common, ExtraArgs, SpotComputeNodeGroup ]
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r6gd.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+  ComputePlacementGroupSubnet1r7gd4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  ComputePlacementGroupSubnet2r7gd4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  ComputePlacementGroupSubnet3r7gd4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  SpotComputePlacementGroupSubnet1r7gd4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  SpotComputePlacementGroupSubnet2r7gd4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  SpotComputePlacementGroupSubnet3r7gd4xlarge:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: cluster
+
+  LaunchTemplateSubnet1r7gd4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-compute-subnet-1-launch-template-r7gd.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !Ref EksImageIdSSMParamARM
+        InstanceType: r7gd.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+  
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+  
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=lifecycle=on-demand,compute=true,computeId=unassigned,node.kubernetes.io/compute=true,primary-compute-instance-type=${Itype}
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+  
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+  
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: ComputeNodeGroupSubnet1r7gd4xlarge
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r7gd.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  LaunchTemplateSubnet2r7gd4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-compute-subnet-2-launch-template-r7gd.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !Ref EksImageIdSSMParamARM
+        InstanceType: r7gd.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=lifecycle=on-demand,compute=true,computeId=unassigned,node.kubernetes.io/compute=true,primary-compute-instance-type=${Itype}
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: ComputeNodeGroupSubnet2r7gd4xlarge
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r7gd.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  LaunchTemplateSubnet3r7gd4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-compute-subnet-3-launch-template-r7gd.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !Ref EksImageIdSSMParamARM
+        InstanceType: r7gd.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=lifecycle=on-demand,compute=true,computeId=unassigned,node.kubernetes.io/compute=true,primary-compute-instance-type=${Itype}
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: ComputeNodeGroupSubnet3r7gd4xlarge
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [ UseProxy, !FindInMap [ Common, ProxyData, Value ], '' ]
+                ProxyParameter: !If [ UseProxy, '--https-proxy $PROXY', '' ]
+                ProxyEnvironmentVar: !If [ UseProxy, !Join [ "", [ 'PROXY=', !Ref Proxy ] ], '' ]
+                NoProxyEnvironmentVar: !If [ UseProxy, !Join [ "", [ 'NOPROXY=', !Ref NoProxy ] ], '' ]
+                Itype: r7gd.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  ComputeNodeGroupSubnet1r7gd4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-compute-subnet-1-r7gd.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId:  !Ref LaunchTemplateSubnet1r7gd4xlarge
+        Version: !GetAtt 'LaunchTemplateSubnet1r7gd4xlarge.LatestVersionNumber'
+      MinSize: !Ref MinComputeNodeCount
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref ComputePlacementGroupSubnet1r7gd4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet1, !Ref CustomSubnet1]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-compute-node-subnet-1-r7gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r7gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'on-demand'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  ComputeNodeGroupSubnet2r7gd4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-compute-subnet-2-r7gd.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplateSubnet2r7gd4xlarge
+        Version: !GetAtt 'LaunchTemplateSubnet2r7gd4xlarge.LatestVersionNumber'
+      MinSize: !Ref MinComputeNodeCount
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref ComputePlacementGroupSubnet2r7gd4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet2, !Ref CustomSubnet2]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-compute-node-subnet-2-r7gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r7gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'on-demand'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  ComputeNodeGroupSubnet3r7gd4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-compute-subnet-3-r7gd.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplateSubnet3r7gd4xlarge
+        Version: !GetAtt 'LaunchTemplateSubnet3r7gd4xlarge.LatestVersionNumber'
+      MinSize: !Ref MinComputeNodeCount
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref ComputePlacementGroupSubnet3r7gd4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet3, !Ref CustomSubnet3]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-compute-node-subnet-3-r7gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r7gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'on-demand'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  SpotComputeNodeGroupSubnet1r7gd4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: SpotInstancesEnabled
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-spot-compute-subnet-1-r7gd.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref SpotComputeNodeLaunchTemplateSubnet1r7gd4xlarge
+        Version: !GetAtt 'SpotComputeNodeLaunchTemplateSubnet1r7gd4xlarge.LatestVersionNumber'
+      MinSize: "0"
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref SpotComputePlacementGroupSubnet1r7gd4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet1, !Ref CustomSubnet1]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-spot-compute-node-subnet-1-r7gd4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r7gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'ec2-spot'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  SpotComputeNodeGroupSubnet2r7gd4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: SpotInstancesEnabled
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-spot-compute-subnet-2-r7gd.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref SpotComputeNodeLaunchTemplateSubnet2r7gd4xlarge
+        Version: !GetAtt 'SpotComputeNodeLaunchTemplateSubnet2r7gd4xlarge.LatestVersionNumber'
+      Cooldown: 0
+      MinSize: "0"
+      MaxSize: !Ref MaxComputeNodeCount
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref SpotComputePlacementGroupSubnet2r7gd4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet2, !Ref CustomSubnet2]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-spot-compute-node-subnet-2-r7gd4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r7gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'ec2-spot'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  SpotComputeNodeGroupSubnet3r7gd4xlarge:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: SpotInstancesEnabled
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-eks-spot-compute-subnet-3-r7gd.4xlarge"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref SpotComputeNodeLaunchTemplateSubnet3r7gd4xlarge
+        Version: !GetAtt 'SpotComputeNodeLaunchTemplateSubnet3r7gd4xlarge.LatestVersionNumber'
+      MinSize: "0"
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref SpotComputePlacementGroupSubnet3r7gd4xlarge
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet3, !Ref CustomSubnet3]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-spot-compute-node-subnet-3-r7gd4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/compute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/primary-compute-instance-type"
+          Value: "r7gd.4xlarge"
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/lifecycle"
+          Value: 'ec2-spot'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  SpotComputeNodeLaunchTemplateSubnet1r7gd4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Condition: SpotInstancesEnabled
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-spot-compute-subnet-1-launch-template-r7gd.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !Ref EksImageIdSSMParamARM
+        InstanceType: r7gd.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            MaxPrice: !Ref SpotPrice
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+        
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+        
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=primary-compute-instance-type=${Itype},compute=true,node.kubernetes.io/spot-compute=role,lifecycle=ec2-spot,computeId=unassigned
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+                
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+        
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: SpotComputeNodeGroupSubnet1r7gd4xlarge
+                ExtraArgsFromMap: !FindInMap [ Common, ExtraArgs, SpotComputeNodeGroup ]
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r7gd.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  SpotComputeNodeLaunchTemplateSubnet2r7gd4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Condition: SpotInstancesEnabled
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-spot-compute-subnet-2-launch-template-r7gd.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !Ref EksImageIdSSMParamARM
+        InstanceType: r7gd.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            MaxPrice: !Ref SpotPrice
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=primary-compute-instance-type=${Itype},compute=true,node.kubernetes.io/spot-compute=role,lifecycle=ec2-spot,computeId=unassigned
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: SpotComputeNodeGroupSubnet2r7gd4xlarge
+                ExtraArgsFromMap: !FindInMap [ Common, ExtraArgs, SpotComputeNodeGroup ]
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r7gd.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  SpotComputeNodeLaunchTemplateSubnet3r7gd4xlarge:
+    Type: AWS::EC2::LaunchTemplate
+    Condition: SpotInstancesEnabled
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-spot-compute-subnet-3-launch-template-r7gd.4xlarge"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+              - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !Ref EksImageIdSSMParamARM
+        InstanceType: r7gd.4xlarge
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            MaxPrice: !Ref SpotPrice
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=primary-compute-instance-type=${Itype},compute=true,node.kubernetes.io/spot-compute=role,lifecycle=ec2-spot,computeId=unassigned
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: SpotComputeNodeGroupSubnet3r7gd4xlarge
+                ExtraArgsFromMap: !FindInMap [ Common, ExtraArgs, SpotComputeNodeGroup ]
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+                Itype: r7gd.4xlarge
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  DevModeComputeNodeGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: DevModeEnabled
+    Properties:
+      AutoScalingGroupName: "env-6l77vh-dwx-stack-eks-dev-mode-compute-asg"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DevModeComputeNodeLaunchTemplate
+        Version: !GetAtt 'DevModeComputeNodeLaunchTemplate.LatestVersionNumber'
+      MinSize: !Ref MinComputeNodeCount
+      MaxSize: !Ref MaxComputeNodeCount
+      Cooldown: 0
+      DesiredCapacity: !Ref DesiredComputeNodeCount
+      PlacementGroup: !Ref DevComputePlacementGroup
+      # removing multiple subnets for devcompute to fix the 5min start up delay.
+      # for devmode, AZ spreading is not done (if required ASGs have to be splitted up into 1 per subnet).
+      VPCZoneIdentifier:
+        - !If [CreateVPC, !Ref PrivateSubnet1, !Ref CustomSubnet1]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-dev-mode-compute-node"
+          PropagateAtLaunch: 'true'
+        - Key: !Sub 'kubernetes.io/cluster/${AWS::StackName}-eks'
+          Value: 'shared'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/enabled"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: !Sub "k8s.io/cluster-autoscaler/${AWS::StackName}-eks"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/label/devcompute"
+          Value: 'true'
+          PropagateAtLaunch: 'true'
+        - Key: "k8s.io/cluster-autoscaler/node-template/resources/ephemeral-storage"
+          Value: !Join [ "", [ !Ref NodeVolumeSize, 'G' ] ]
+          PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+        SuspendProcesses:
+          - AZRebalance
+
+  SharedServicesNodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-shared-service-launch-template"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+            - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !If [HasNodeImageId, !Ref EksAmi, !Ref EksImageIdSSMParam]
+        InstanceType: !Ref SharedServicesNodeInstanceType
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 25
+                    flags:
+                      - --node-labels=node.kubernetes.io/shared-services=role,lifecycle=on-demand,sharedServices=sharedServices,computeId=unassigned
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: SharedServicesNodeGroup
+                ExtraArgsFromMap: !FindInMap [ Common, ExtraArgs, SharedServicesNodeGroup ]
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+  DevModeComputeNodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Condition: DevModeEnabled
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-dev-mode-compute-launch-template"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            Groups:
+            - !Ref NodeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref NodeInstanceProfile
+        ImageId: !If [HasNodeImageId, !Ref EksAmi, !Ref EksImageIdSSMParam]
+        InstanceType: !Ref DevModeComputeNodeInstanceType
+        KeyName: !Ref KeyName
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Fn::If:
+                - EncryptionKeyNotSpecified
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !GetAtt KMSKey.Arn
+                - VolumeSize: !Ref NodeVolumeSize
+                  VolumeType: gp3
+                  DeleteOnTermination: true
+                  Encrypted: true
+                  KmsKeyId: !Ref EncryptionKeyARN
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+                --BOUNDARY
+                Content-Type: application/node.eks.aws
+
+                ---
+                apiVersion: node.eks.aws/v1alpha1
+                kind: NodeConfig
+                spec:
+                  cluster:
+                    name: ${AWS::StackName}-eks
+                    apiServerEndpoint: ${ApiServerEndpoint}
+                    certificateAuthority: ${EksClusterCa}
+                    cidr: 172.20.0.0/16
+                  kubelet:
+                    config:
+                      apiVersion: kubelet.config.k8s.io/v1beta1
+                      kind: KubeletConfiguration
+                      clusterDNS:
+                        - 169.254.20.10
+                      cpuCFSQuota: false
+                      allowedUnsafeSysctls:
+                        - net.core.somaxconn
+                        - net.ipv4.tcp_max_syn_backlog
+                        - net.ipv4.tcp_fin_timeout
+                      maxPods: 15
+                      registerWithTaints:
+                      - key: "computeId"
+                        value: "unassigned"
+                        effect: "NoSchedule"
+                    flags:
+                      - --node-labels=node.kubernetes.io/dev-compute=role,devcompute=true,computeId=unassigned
+                --BOUNDARY
+                Content-Type: text/x-shellscript; charset="us-ascii"
+
+                ${UserDataFromMap}
+                ${ProxyEnvironmentVar}
+                ${NoProxyEnvironmentVar}
+                ${ProxyUserDataFromMap}
+                /opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource ${ResourceName} --region ${AWS::Region} ${ProxyParameter}
+
+                --BOUNDARY--
+              - UserDataFromMap: !FindInMap [ Common, UserData, Value ]
+                ResourceName: DevModeComputeNodeGroup
+                ExtraArgsFromMap: !FindInMap [ Common, ExtraArgs, DevModeComputeNodeGroup ]
+                EksClusterCa: !GetAtt EKSCluster.CertificateAuthorityData
+                ApiServerEndpoint: !GetAtt EKSCluster.Endpoint
+                ProxyUserDataFromMap: !If [UseProxy, !FindInMap [ Common, ProxyData, Value ], '']
+                ProxyParameter: !If [UseProxy, '--https-proxy $PROXY', '']
+                ProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'PROXY=', !Ref Proxy ] ], '']
+                NoProxyEnvironmentVar: !If [UseProxy, !Join [ "", [  'NOPROXY=', !Ref NoProxy ] ], '']
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+          HttpTokens: !If
+            - IMDSv1Disabled
+            - required
+            - optional
+    DependsOn: EKSCluster
+
+Outputs:
+  KMSKeyArn:
+    Description: Identifier for the issued KMS key
+    Value: !If [EncryptionKeyNotSpecified, !Ref KMSKey, !Ref EncryptionKeyARN]
+
+  EFSId:
+    Description: Identifier for the provisioned EFS
+    Value: !Ref EFS
+
+  PrivateSubnetIds:
+    Description: All private subnets created in the VPC
+    Value: !Join [ ",", !If [CreateVPC, [ !Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3 ],  [ !Ref CustomSubnet1, !Ref CustomSubnet2, !Ref CustomSubnet3 ] ]]
+
+  PublicSubnetIds:
+    Description: All public subnets created in the VPC
+    Value: !Join [ ",", !If [CreateVPC, [ !Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3 ],  [ "" ] ]]
+
+  SecurityGroups:
+    Description: Security group for the cluster control plane communication with worker nodes
+    Value: !Join [ ",", [ !Ref ClusterControlPlaneSecurityGroup ]]
+
+  VpcId:
+    Description: The VPC Id
+    Value: !If [CreateVPC, !Ref VPC, !Ref CustomVpc]
+
+  VpcCidrBlock:
+    Description: Cidr block of VPC
+    Value: !If [CreateVPC, !GetAtt VPC.CidrBlock, !Ref VpcCIDRBlock]
+
+  EKSServiceRoleArn:
+    Description: The role that EKS will use to create AWS resources for Kubernetes clusters
+    Value: !GetAtt EKSServiceRole.Arn
+
+  NodeInstanceRoleArn:
+    Description: The node instance role for EKS worker nodes
+    Value: !GetAtt NodeInstanceRole.Arn
+
+  RDSInstanceId:
+    Description: The connection endpoint for the database.
+    Value: !Ref DBInstance
+
+  EKSClusterName:
+    Description: Identifier for the EKS cluster.
+    Value: !Ref EKSCluster
+
+  RDSEndpoint:
+    Description: The connection endpoint for the database.
+    Value: !GetAtt DBInstance.Endpoint.Address
+
+  EKSClusterCA:
+    Description: Certificate Authority Data for the EKS cluster.
+    Value: !GetAtt EKSCluster.CertificateAuthorityData
+
+  EKSClusterEndpoint:
+    Description: Endpoint for the EKS control plane.
+    Value: !GetAtt EKSCluster.Endpoint
+
+  EKSClusterResourceArn:
+    Description: Identifier for the EKS cluster.
+    Value: !GetAtt EKSCluster.Arn.        ,
