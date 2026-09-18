@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "leon-hospital-notify": {
+      "command": "python",
+      "args": ["insurance-demo/mcp/notify_server.py"],
+      "env": {
+        "NTFY_TOPIC": "leon-hospital-claims",
+        "HOSPITAL_NAME": "Leon Hospital"
+      }
+    }
+  }
+}

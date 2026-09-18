@@ -1,0 +1,17 @@
+# Insurance Demo — Python dependencies (local prep + CAI Workbench)
+
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.3
+xgboost>=2.0
+joblib>=1.3
+
+# Phase 1 — Gemini API agent
+google-generativeai>=0.8
+
+# Qdrant CAI Application + policy RAG (not RAG Studio)
+qdrant-client>=1.9
+openai>=1.30
+
+# Optional on CAI when reading hive.insurance_leo_trino.claim_features_v1
+# pyspark>=3.3

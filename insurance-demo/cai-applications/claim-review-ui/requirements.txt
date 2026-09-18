@@ -1,0 +1,6 @@
+flask>=3.0
+requests>=2.31
+mcp>=1.2.0
+# Guardrails AI (when GUARDRAILS_MODE=guardrails_ai — run setup_guardrails_ai.sh once after pip install):
+guardrails-ai>=0.6.0
+guardrails-ai-detect-pii>=0.0.6

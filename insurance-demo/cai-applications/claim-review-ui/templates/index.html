@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Leon Hospital · MediShield Claims Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --brand-navy: #0B2545;
+      --brand-blue: #1E4D7B;
+      --brand-teal: #0E7490;
+      --cloudera-orange: #F96702;
+      --text: #1E293B;
+      --text-muted: #64748B;
+      --border: #E2E8F0;
+      --border-light: #F1F5F9;
+      --bg: #F8FAFC;
+      --surface: #FFFFFF;
+      --sidebar-bg: #FFFFFF;
+      --success: #047857;
+      --success-bg: #ECFDF5;
+      --warning: #B45309;
+      --warning-bg: #FFFBEB;
+      --danger: #B91C1C;
+      --danger-bg: #FEF2F2;
+      --info: #0369A1;
+      --info-bg: #F0F9FF;
+      --radius: 10px;
+      --radius-lg: 12px;
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+      --shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+    }
+
+    body {
+      font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* —— Top bar —— */
+    .topbar {
+      height: 56px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 1.5rem;
+      flex-shrink: 0;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .product-mark {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .hospital-logo {
+      width: 40px;
+      height: 40px;
+      object-fit: contain;
+      flex-shrink: 0;
+    }
+
+    .product-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--brand-navy);
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+    }
+
+    .product-subtitle {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+
+    .topbar-divider {
+      width: 1px;
+      height: 28px;
+      background: var(--border);
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+    }
+
+    .powered-by {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      font-weight: 500;
+    }
+
+    .cloudera-logo-img {
+      height: 28px;
+      min-height: 28px;
+      width: auto;
+      max-width: 140px;
+      display: block;
+      object-fit: contain;
+      object-position: left center;
+    }
+
+    .env-badge {
+      font-size: 0.68rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: var(--border-light);
+      border: 1px solid var(--border);
+      padding: 0.3rem 0.65rem;
+      border-radius: 6px;
+    }
+
+    /* —— Layout —— */
+    .app-body {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+    @media (max-width: 900px) {
+      .app-body { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+    }
+
+    /* —— Sidebar —— */
+    .sidebar {
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .sidebar-block {
+      padding: 1.25rem;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .block-title {
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 0.75rem;
+    }
+
+    .status-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      color: var(--text);
+    }
+
+    .status-label { color: var(--text-muted); }
+
+    .status-value {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-weight: 500;
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #94A3B8;
+    }
+    .dot.ok { background: #10B981; }
+    .dot.warn { background: #F59E0B; }
+
+    .sidebar-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 1rem 1.25rem;
+    }
+
+    .claim-card {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.75rem 0.85rem;
+      margin-bottom: 0.5rem;
+      cursor: pointer;
+      font-family: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .claim-card:hover {
+      border-color: var(--brand-blue);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .claim-card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+
+    .claim-id {
+      font-weight: 600;
+      font-size: 0.85rem;
+      color: var(--brand-navy);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .claim-badge {
+      font-size: 0.62rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+    }
+    .claim-badge.success { background: var(--success-bg); color: var(--success); }
+    .claim-badge.danger { background: var(--danger-bg); color: var(--danger); }
+    .claim-badge.warning { background: var(--warning-bg); color: var(--warning); }
+    .claim-badge.info { background: var(--info-bg); color: var(--info); }
+
+    .claim-hint {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin-top: 0.35rem;
+      line-height: 1.4;
+    }
+
+    .sidebar-footer {
+      padding: 1rem 1.25rem;
+      border-top: 1px solid var(--border-light);
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    /* —— Main —— */
+    .main {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+    }
+
+    .chat-header {
+      padding: 1rem 1.75rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .chat-header h2 {
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--brand-navy);
+    }
+
+    .chat-header p {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 0.2rem;
+      max-width: 640px;
+      line-height: 1.45;
+    }
+
+    .messages {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      padding: 1.5rem 1.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.1rem;
+    }
+
+    .msg {
+      display: flex;
+      gap: 0.75rem;
+      max-width: 82%;
+      animation: fadeIn 0.2s ease;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+    .msg.assistant { align-self: flex-start; }
+    .msg.system { align-self: stretch; max-width: 100%; }
+
+    .avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: grid;
+      place-items: center;
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .msg.user .avatar {
+      background: var(--brand-navy);
+      color: white;
+    }
+    .msg.assistant .avatar {
+      background: var(--brand-teal);
+      color: white;
+    }
+    .msg.system .avatar { display: none; }
+
+    .bubble {
+      padding: 0.9rem 1.1rem;
+      border-radius: var(--radius-lg);
+      font-size: 0.88rem;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .msg.user .bubble {
+      background: var(--brand-navy);
+      color: #F8FAFC;
+      border-bottom-right-radius: 4px;
+    }
+
+    .msg.assistant .bubble {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .msg.system .bubble {
+      background: var(--danger-bg);
+      color: var(--danger);
+      border: 1px solid rgba(185, 28, 28, 0.15);
+      font-size: 0.82rem;
+      border-radius: var(--radius);
+    }
+
+    .outcome-tag {
+      display: inline-flex;
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.25rem 0.55rem;
+      border-radius: 4px;
+      margin-bottom: 0.55rem;
+    }
+    .outcome-tag.success { background: var(--success-bg); color: var(--success); }
+    .outcome-tag.warning { background: var(--warning-bg); color: var(--warning); }
+    .outcome-tag.danger { background: var(--danger-bg); color: var(--danger); }
+    .outcome-tag.info { background: var(--info-bg); color: var(--info); }
+
+    .meta-row {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      margin-top: 0.55rem;
+      padding-top: 0.55rem;
+      border-top: 1px solid var(--border-light);
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-bottom: 0.55rem;
+    }
+    .verify-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.62rem;
+      font-weight: 600;
+      padding: 0.22rem 0.5rem;
+      border-radius: 4px;
+    }
+    .verify-badge.ok { background: var(--success-bg); color: var(--success); }
+    .verify-badge.muted { background: var(--info-bg); color: var(--info); }
+    .verify-badge.warn { background: var(--warning-bg); color: var(--warning); }
+
+    .review-banner {
+      background: var(--warning-bg);
+      color: var(--warning);
+      font-size: 0.72rem;
+      line-height: 1.4;
+      padding: 0.55rem 0.7rem;
+      border-radius: var(--radius);
+      margin-bottom: 0.6rem;
+      border: 1px solid var(--warning);
+    }
+
+    .typing {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      color: var(--text-muted);
+      font-size: 0.84rem;
+    }
+    .typing-dots span {
+      display: inline-block;
+      width: 5px;
+      height: 5px;
+      background: var(--brand-teal);
+      border-radius: 50%;
+      margin-right: 3px;
+      animation: bounce 1.2s infinite;
+    }
+    .typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+    .typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+      30% { transform: translateY(-3px); opacity: 1; }
+    }
+
+    .composer {
+      padding: 1rem 1.75rem 1.25rem;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .composer-inner {
+      display: flex;
+      gap: 0.65rem;
+      align-items: flex-end;
+      max-width: 880px;
+      margin: 0 auto;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 0.6rem 0.6rem 0.6rem 1rem;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .composer-inner:focus-within {
+      border-color: var(--brand-blue);
+      box-shadow: 0 0 0 3px rgba(30, 77, 123, 0.1);
+    }
+
+    #message-input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      font-family: inherit;
+      font-size: 0.9rem;
+      line-height: 1.5;
+      resize: none;
+      max-height: 120px;
+      min-height: 24px;
+      color: var(--text);
+    }
+    #message-input:focus { outline: none; }
+    #message-input::placeholder { color: #94A3B8; }
+
+    .send-btn {
+      width: 38px;
+      height: 38px;
+      border: none;
+      border-radius: 8px;
+      background: var(--brand-navy);
+      color: white;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    .send-btn:hover:not(:disabled) { background: var(--brand-blue); }
+    .send-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .composer-hint {
+      text-align: center;
+      font-size: 0.67rem;
+      color: var(--text-muted);
+      margin-top: 0.55rem;
+    }
+
+    .composer-hint strong {
+      font-weight: 500;
+      color: #94A3B8;
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="product-mark">
+        <img
+          class="hospital-logo"
+          src="{{ url_for('static', filename='leon-hospital-logo.png') }}"
+          alt="Leon Hospital"
+        />
+        <div>
+          <div class="product-title">Leon Hospital</div>
+          <div class="product-subtitle">MediShield claims review workspace</div>
+        </div>
+      </div>
+      <div class="topbar-divider" aria-hidden="true"></div>
+      <span class="env-badge">Enterprise · Governed AI</span>
+    </div>
+    <div class="topbar-right">
+      <div class="powered-by">
+        <span>Powered by</span>
+        <img
+          class="cloudera-logo-img"
+          src="{{ url_for('static', filename='cloudera-logo.png') }}"
+          alt="Cloudera"
+        />
+      </div>
+    </div>
+  </header>
+
+  <div class="app-body">
+    <aside class="sidebar">
+      <div class="sidebar-block">
+        <div class="block-title">System status</div>
+        <div class="status-grid">
+          <div class="status-row">
+            <span class="status-label">Workflow</span>
+            <span class="status-value">
+              <span class="dot {% if workflow_configured %}ok{% else %}warn{% endif %}"></span>
+              {% if workflow_configured %}Connected{% else %}Not configured{% endif %}
+            </span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">Guardrails</span>
+            <span class="status-value">
+              <span class="dot ok"></span>
+              {{ guardrails_mode }}
+            </span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">Data source</span>
+            <span class="status-value">CDW / Trino</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-scroll">
+        <div class="block-title">Reference claims</div>
+        {% for c in demo_claims %}
+        <button type="button" class="claim-card" data-prompt="Please review claim {{ c.id }} and recommend approve, partial approval, reject, or manual review. Cite relevant MediShield policy sections and suggest the next step for the claims adjuster.">
+          <div class="claim-card-top">
+            <span class="claim-id">{{ c.id }}</span>
+            <span class="claim-badge {{ c.tone }}">{{ c.label }}</span>
+          </div>
+          <div class="claim-hint">{{ c.hint }}</div>
+        </button>
+        {% endfor %}
+      </div>
+
+      <div class="sidebar-footer">
+        Responses are grounded in governed claim features and policy documents. Do not enter patient identifiers (SSN, email, phone) in this channel.
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="chat-header">
+        <h2>Claims review assistant</h2>
+        <p>Review hospital claims using governed data from the enterprise warehouse, MediShield coverage policy, and AI-assisted recommendations. All inputs are screened for PII and policy compliance.</p>
+      </header>
+
+      <div class="messages" id="messages">
+        <div class="msg assistant">
+          <div class="avatar">AI</div>
+          <div class="bubble">Welcome to the Leon Hospital claims review assistant. I can help you review hospital insurance claims and prepare a governed recommendation.
+
+To begin, enter a claim ID (for example, CLM-50021) or select a reference claim from the panel on the left. I will retrieve governed claim data, apply MediShield policy rules, and provide a structured recommendation with cited policy sections.
+
+Please use claim IDs only — do not include Social Security numbers, email addresses, or phone numbers in this channel.</div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <form id="chat-form">
+          <div class="composer-inner">
+            <textarea id="message-input" rows="1" placeholder="Enter a claim review request, e.g. Review claim CLM-50021" required></textarea>
+            <button type="submit" class="send-btn" id="send-btn" title="Submit for review" aria-label="Submit">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+              </svg>
+            </button>
+          </div>
+        </form>
+        <p class="composer-hint"><strong>Cloudera AI</strong> · Agent Studio · Data Warehouse · Guardrails</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const messagesEl = document.getElementById("messages");
+    const form = document.getElementById("chat-form");
+    const input = document.getElementById("message-input");
+    const sendBtn = document.getElementById("send-btn");
+
+    input.addEventListener("input", () => {
+      input.style.height = "auto";
+      input.style.height = Math.min(input.scrollHeight, 120) + "px";
+    });
+
+    document.querySelectorAll(".claim-card").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        input.value = btn.dataset.prompt;
+        input.dispatchEvent(new Event("input"));
+        form.requestSubmit();
+      });
+    });
+
+    function scrollBottom() {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function detectOutcome(text) {
+      const t = (text || "").toLowerCase();
+      if (t.includes("reject")) return { cls: "danger", label: "Rejected" };
+      if (t.includes("partial")) return { cls: "warning", label: "Partial approval" };
+      if (t.includes("manual")) return { cls: "info", label: "Manual review" };
+      if (t.includes("approv")) return { cls: "success", label: "Approved" };
+      return null;
+    }
+
+    function addMessage(role, html, extra = "") {
+      const wrap = document.createElement("div");
+      wrap.className = `msg ${role}`;
+      if (role === "system") {
+        wrap.innerHTML = `<div class="bubble"><strong>Notice</strong><br>${html}</div>`;
+      } else {
+        wrap.innerHTML = `
+          <div class="avatar">${role === "user" ? "You" : "AI"}</div>
+          <div class="bubble">${extra}${html}</div>`;
+      }
+      messagesEl.appendChild(wrap);
+      scrollBottom();
+      return wrap;
+    }
+
+    function showTyping() {
+      const el = document.createElement("div");
+      el.className = "msg assistant";
+      el.id = "typing-indicator";
+      el.innerHTML = `
+        <div class="avatar">AI</div>
+        <div class="bubble typing">
+          <div class="typing-dots"><span></span><span></span><span></span></div>
+          Retrieving claim data and policy references. This may take 1–2 minutes.
+        </div>`;
+      messagesEl.appendChild(el);
+      scrollBottom();
+    }
+
+    function hideTyping() {
+      document.getElementById("typing-indicator")?.remove();
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+
+      addMessage("user", escapeHtml(text));
+      input.value = "";
+      input.style.height = "auto";
+      sendBtn.disabled = true;
+      showTyping();
+
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text }),
+        });
+        const data = await res.json();
+        hideTyping();
+
+        if (!res.ok || data.status === "error" || data.status === "timeout" || data.status === "guardrail_blocked") {
+          const reason = data.reason || data.error || data.hint || "Request failed";
+          let extra = "";
+          if (data.events && data.events.length) {
+            const types = data.events.map(e => e.type || "?").join(", ");
+            extra = `<br><small>Last events: ${escapeHtml(types)}</small>`;
+          }
+          addMessage("system", escapeHtml(reason) + extra);
+          return;
+        }
+
+        const raw = typeof data.output === "string"
+          ? data.output
+          : JSON.stringify(data.output, null, 2);
+        const outcome = detectOutcome(raw);
+        const grounding = data.grounding || { checked: false };
+        let extra = "";
+
+        // Verdict badge
+        if (outcome) {
+          extra += `<div class="outcome-tag ${outcome.cls}">${outcome.label}</div>`;
+        }
+
+        // Honest trust badges
+        const badges = [];
+        const engine = data.guardrails?.engine;
+        if (data.guardrails?.passed) {
+          const cls = engine === "guardrails_ai" ? "ok" : "muted";
+          const label = engine === "guardrails_ai" ? "PII guardrails (Presidio)" : "Guardrails (basic)";
+          badges.push(`<span class="verify-badge ${cls}">${escapeHtml(label)}</span>`);
+        }
+        if (grounding.checked && grounding.grounded) {
+          badges.push(`<span class="verify-badge ok">✓ Verified against claim data</span>`);
+        } else if (grounding.checked && !grounding.grounded) {
+          badges.push(`<span class="verify-badge warn">⚠ Not verified against claim data</span>`);
+        }
+        if (data.manual_review_ticket?.ticket_id) {
+          badges.push(`<span class="verify-badge muted">🔔 Escalated · ${escapeHtml(data.manual_review_ticket.ticket_id)}</span>`);
+        }
+        if (badges.length) {
+          extra += `<div class="badge-row">${badges.join("")}</div>`;
+        }
+
+        // Warning banner if the answer did not match governed facts
+        if (grounding.checked && !grounding.grounded) {
+          extra += `<div class="review-banner">This response could not be automatically verified against the
+            claim record${grounding.expected_amount ? ` (expected amount around $${grounding.expected_amount})` : ""}.
+            Please re-run or route to a specialist before acting.</div>`;
+        }
+
+        const meta = [];
+        if (data.claim_id) meta.push(`Claim ${data.claim_id}`);
+        if (data.trace_id) meta.push(`Reference ${String(data.trace_id).slice(0, 8)}`);
+        if (data.attempts && data.attempts > 1) meta.push(`Verified after ${data.attempts} passes`);
+        if (meta.length) {
+          extra += `<div class="meta-row">${meta.map(m => escapeHtml(m)).join(" · ")}</div>`;
+        }
+        addMessage("assistant", escapeHtml(raw), extra);
+      } catch (err) {
+        hideTyping();
+        addMessage("system", escapeHtml(err.message));
+      } finally {
+        sendBtn.disabled = false;
+        input.focus();
+      }
+    });
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+  </script>
+</body>
+</html>
