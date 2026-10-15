@@ -1,0 +1,5 @@
+job_name: spark3_events_etl
+source_file: events_etl_spark3.py
+spark_version: 3
+migrate: true
+description: Synthetic events join + window + daily aggregates (Spark 3 VC)

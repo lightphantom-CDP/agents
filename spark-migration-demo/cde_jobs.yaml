@@ -1,0 +1,19 @@
+# CDE job registry for Spark agent (file read tool loads this file)
+cde_service_label: awc-demo
+
+jobs:
+  - name: spark3-events-etl
+    virtual_cluster: Spark 3 VC
+    resource_or_path: events_etl_spark3.py
+    source_file: jobs/spark3_events_etl/events_etl_spark3.py
+    meta_file: jobs/spark3_events_etl/job.meta.yaml
+    spark_version: 3
+    migrate: true
+
+  - name: spark4-events-etl
+    virtual_cluster: Spark 4 VC
+    resource_or_path: events_etl_spark4.py
+    source_file: jobs/spark4_events_etl/events_etl_spark4.py
+    meta_file: jobs/spark4_events_etl/job.meta.yaml
+    spark_version: 4
+    migrate: false

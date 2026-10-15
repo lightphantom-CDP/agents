@@ -1,0 +1,5 @@
+job_name: spark4_events_etl
+source_file: events_etl_spark4.py
+spark_version: 4
+migrate: false
+description: Same logic as spark3 job; native Spark 4 VC canary reference
