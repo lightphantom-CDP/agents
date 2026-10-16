@@ -1,0 +1,125 @@
+name: Deploy Spark 3 job to CDE
+
+# Baseline Spark 3 job. Deploys/runs the Spark 3 job on the Spark 3 virtual cluster
+# when its source changes, or on demand (e.g. to produce Spark 3 counts for the
+# Spark 3 vs Spark 4 parity comparison).
+#
+# Source of truth: GitHub main -> CDE Repository (git pull) -> Spark 3 VC run.
+#
+# Required GitHub repo settings:
+#   Secrets:
+#     CDP_WORKLOAD_USER      - CDP workload username
+#     CDP_WORKLOAD_PASSWORD  - CDP workload password
+#   Variables:
+#     CDE_SPARK3_JOBS_API_URL - e.g. https://c2l54mzt.cde-l5r2jpql.sha-ccf-cde.a97996.test.cldr.work/dex/api/v1
+#     CDE_TOKEN_URL           - shared with Spark 4 (same CDE service)
+#     CDE_REPOSITORY          - CDE Repository name created in the Spark 3 VC (e.g. spark-migration-demo)
+#     CDE_SPARK3_JOB          - CDE job name to run on the Spark 3 VC (e.g. spark3-events-etl)
+#   Optional variable:
+#     CDE_TLS_INSECURE        - "true" to skip TLS verification (internal CA dev clusters)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "spark-migration-demo/jobs/spark3_events_etl/**"
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-spark3-to-cde
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CDE_JOBS_API_URL: ${{ vars.CDE_SPARK3_JOBS_API_URL }}
+      CDE_TOKEN_URL: ${{ vars.CDE_TOKEN_URL }}
+      CDE_REPOSITORY: ${{ vars.CDE_REPOSITORY }}
+      CDE_JOB: ${{ vars.CDE_SPARK3_JOB }}
+      CDP_WORKLOAD_USER: ${{ secrets.CDP_WORKLOAD_USER }}
+      CDP_WORKLOAD_PASSWORD: ${{ secrets.CDP_WORKLOAD_PASSWORD }}
+      CDE_TLS_INSECURE: ${{ vars.CDE_TLS_INSECURE }}
+    steps:
+      - name: Validate configuration
+        run: |
+          set -euo pipefail
+          : "${CDE_JOBS_API_URL:?set repo variable CDE_SPARK3_JOBS_API_URL}"
+          : "${CDE_TOKEN_URL:?set repo variable CDE_TOKEN_URL}"
+          : "${CDE_REPOSITORY:?set repo variable CDE_REPOSITORY}"
+          : "${CDE_JOB:?set repo variable CDE_SPARK3_JOB}"
+          : "${CDP_WORKLOAD_USER:?set secret CDP_WORKLOAD_USER}"
+          : "${CDP_WORKLOAD_PASSWORD:?set secret CDP_WORKLOAD_PASSWORD}"
+          echo "Jobs API : $CDE_JOBS_API_URL"
+          echo "Token URL: $CDE_TOKEN_URL"
+          echo "Repo     : $CDE_REPOSITORY"
+          echo "Job      : $CDE_JOB"
+
+      - name: Set curl TLS flag
+        run: |
+          if [ "${CDE_TLS_INSECURE:-false}" = "true" ]; then
+            echo "CURL_TLS=-k" >> "$GITHUB_ENV"
+          else
+            echo "CURL_TLS=" >> "$GITHUB_ENV"
+          fi
+
+      - name: Get CDE access token
+        run: |
+          set -euo pipefail
+          TOKEN=$(curl -sS $CURL_TLS -u "${CDP_WORKLOAD_USER}:${CDP_WORKLOAD_PASSWORD}" \
+            "${CDE_TOKEN_URL}" | jq -r '.access_token')
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "::error::Failed to obtain CDE access token (check CDE_TOKEN_URL and workload creds)"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "CDE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "Obtained CDE access token."
+
+      - name: Sync CDE Repository from GitHub
+        run: |
+          set -euo pipefail
+          echo "Syncing repository '${CDE_REPOSITORY}' ..."
+          HTTP=$(curl -sS $CURL_TLS -o /tmp/sync.out -w '%{http_code}' \
+            -X POST -H "Authorization: Bearer ${CDE_TOKEN}" \
+            "${CDE_JOBS_API_URL}/repositories/${CDE_REPOSITORY}/sync")
+          echo "HTTP $HTTP"; cat /tmp/sync.out || true; echo
+          if [ "$HTTP" -ge 400 ]; then
+            echo "::error::Repository sync failed (HTTP $HTTP)"
+            exit 1
+          fi
+
+      - name: Run CDE job
+        run: |
+          set -euo pipefail
+          echo "Running job '${CDE_JOB}' ..."
+          HTTP=$(curl -sS $CURL_TLS -o /tmp/run.out -w '%{http_code}' \
+            -X POST -H "Authorization: Bearer ${CDE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "${CDE_JOBS_API_URL}/jobs/${CDE_JOB}/run" -d '{}')
+          echo "HTTP $HTTP"; cat /tmp/run.out || true; echo
+          if [ "$HTTP" -ge 400 ]; then
+            echo "::error::Job run submit failed (HTTP $HTTP)"
+            exit 1
+          fi
+          RUN_ID=$(jq -r '.id // empty' /tmp/run.out)
+          echo "RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
+          echo "Submitted run id: ${RUN_ID:-<none>}"
+
+      - name: Poll run status
+        if: ${{ env.RUN_ID != '' }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            STATUS=$(curl -sS $CURL_TLS -H "Authorization: Bearer ${CDE_TOKEN}" \
+              "${CDE_JOBS_API_URL}/job-runs/${RUN_ID}" | jq -r '.status // "unknown"')
+            echo "[$i] run ${RUN_ID} status: ${STATUS}"
+            case "$STATUS" in
+              succeeded|finished)
+                echo "Job succeeded."; exit 0 ;;
+              failed|killed|error)
+                echo "::error::Job ended with status ${STATUS}"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "::warning::Timed out polling run ${RUN_ID}; check CDE UI for final status."
