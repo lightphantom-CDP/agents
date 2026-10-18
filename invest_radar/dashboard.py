@@ -1,0 +1,179 @@
+"""Render a run as a single, self-contained, mobile-friendly HTML dashboard.
+
+Everything (styles, tiny JS, data) is inlined so the file works offline by simply
+double-clicking it - no server, no CDN, no build step.
+"""
+
+from __future__ import annotations
+
+from html import escape
+
+from .report import RunResult
+from .scoring import AssetScore
+
+_REFRESH_SECONDS = 1800  # the hourly job rewrites this file; refresh keeps it fresh
+
+
+def _ring(score: float, color: str, size: int = 108) -> str:
+    inner = size - 22
+    return (
+        f'<div class="ring" style="width:{size}px;height:{size}px;'
+        f"background:conic-gradient({color} {score * 3.6:.1f}deg,#23262e 0);\">"
+        f'<div class="ring-hole" style="width:{inner}px;height:{inner}px;">'
+        f'<span class="ring-val" style="color:{color}">{score:.0f}</span>'
+        f'<span class="ring-max">/100</span></div></div>'
+    )
+
+
+def _bars(comps: dict[str, float]) -> str:
+    order = [("valuation", "Value"), ("dip", "Dip"), ("trend", "Trend"), ("timing", "Timing")]
+    rows = []
+    for key, label in order:
+        if key not in comps:
+            continue
+        v = comps[key]
+        rows.append(
+            f'<div class="bar"><span class="bar-l">{label}</span>'
+            f'<span class="bar-t"><i style="width:{v:.0f}%"></i></span>'
+            f'<span class="bar-n">{v:.0f}</span></div>'
+        )
+    return "".join(rows)
+
+
+def _card(s: AssetScore) -> str:
+    px = f"${s.quote.price:,.2f}" if s.quote.price else "n/a"
+    reasons = "".join(f"<li>{escape(r)}</li>" for r in s.reasons[:4])
+    return f"""
+    <div class="card">
+      <div class="card-top">
+        <div>
+          <div class="sym">{escape(s.asset.symbol)}</div>
+          <div class="name">{escape(s.asset.name)}</div>
+          <div class="price">{px}</div>
+        </div>
+        {_ring(s.overall, s.color, 96)}
+      </div>
+      <div class="pill" style="background:{s.color}22;color:{s.color};border-color:{s.color}55">{escape(s.verdict)}</div>
+      <div class="bars">{_bars(s.components)}</div>
+      <ul class="reasons">{reasons}</ul>
+    </div>"""
+
+
+def render_dashboard(run: RunResult) -> str:
+    p = run.portfolio
+    g = run.goal
+    cards = "".join(_card(s) for s in run.scores)
+
+    alloc_rows = ""
+    for sym, pct in p.allocation.items():
+        if pct <= 0:
+            continue
+        alloc_rows += (
+            f'<div class="bar"><span class="bar-l">{escape(sym)}</span>'
+            f'<span class="bar-t"><i style="width:{pct:.0f}%;background:#38bdf8"></i></span>'
+            f'<span class="bar-n">{pct:g}%</span></div>'
+        )
+    if not alloc_rows:
+        alloc_rows = '<div class="muted">Nothing above HOLD - sit in cash or drip into SPY.</div>'
+
+    goal_rows = ""
+    for r in g.rows:
+        goal_rows += (
+            f"<tr><td>{r.horizon_years}y</td><td>{escape(r.scenario)}</td>"
+            f"<td>{r.annual_return * 100:.0f}%</td>"
+            f"<td>${r.lump_sum_fv_usd:,.0f}</td>"
+            f"<td><b>${r.monthly_usd:,.0f}</b></td></tr>"
+        )
+
+    note = f'<div class="market-note">{escape(run.market_note)}</div>' if run.market_note else ""
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta http-equiv="refresh" content="{_REFRESH_SECONDS}"/>
+<title>InvestRadar - {escape(run.stamp)}</title>
+<style>
+  :root{{color-scheme:dark;}}
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:#0b0d11;color:#e7e9ee;line-height:1.5;padding:16px;max-width:1000px;margin:0 auto}}
+  a{{color:#38bdf8}}
+  .head{{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}}
+  h1{{font-size:20px;letter-spacing:.3px}}
+  .sub{{color:#8b90a0;font-size:12px}}
+  .hero{{display:flex;align-items:center;gap:20px;background:#12151c;border:1px solid #1e2230;
+    border-radius:16px;padding:20px;margin:14px 0}}
+  .hero .htext h2{{font-size:15px;color:#8b90a0;font-weight:600}}
+  .hero .verdict{{font-size:24px;font-weight:800;margin-top:2px}}
+  .market-note{{color:#c7ccda;font-size:13px;margin-top:8px}}
+  .ring{{position:relative;border-radius:50%;display:grid;place-items:center;flex:none}}
+  .ring-hole{{background:#12151c;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center}}
+  .ring-val{{font-size:26px;font-weight:800;line-height:1}}
+  .ring-max{{font-size:10px;color:#8b90a0}}
+  .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}}
+  .card{{background:#12151c;border:1px solid #1e2230;border-radius:14px;padding:14px}}
+  .card-top{{display:flex;justify-content:space-between;align-items:center;gap:10px}}
+  .sym{{font-size:18px;font-weight:800}}
+  .name{{font-size:12px;color:#8b90a0}}
+  .price{{font-size:15px;margin-top:4px;font-weight:600}}
+  .pill{{display:inline-block;margin-top:10px;padding:4px 10px;border-radius:999px;font-size:12px;
+    font-weight:700;border:1px solid}}
+  .bars{{margin-top:12px;display:flex;flex-direction:column;gap:6px}}
+  .bar{{display:flex;align-items:center;gap:8px;font-size:11px;color:#aab0c0}}
+  .bar-l{{width:46px;flex:none}}
+  .bar-t{{flex:1;height:7px;background:#23262e;border-radius:6px;overflow:hidden}}
+  .bar-t i{{display:block;height:100%;background:#22c55e;border-radius:6px}}
+  .bar-n{{width:22px;text-align:right;flex:none;color:#e7e9ee}}
+  .reasons{{list-style:none;margin-top:10px;font-size:12px;color:#c7ccda}}
+  .reasons li{{padding:2px 0 2px 14px;position:relative}}
+  .reasons li:before{{content:"›";position:absolute;left:0;color:#4b5163}}
+  section{{background:#12151c;border:1px solid #1e2230;border-radius:16px;padding:18px;margin-top:14px}}
+  section h3{{font-size:14px;margin-bottom:12px;color:#c7ccda}}
+  table{{width:100%;border-collapse:collapse;font-size:13px}}
+  th,td{{text-align:right;padding:7px 8px;border-bottom:1px solid #1e2230}}
+  th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){{text-align:left}}
+  th{{color:#8b90a0;font-weight:600}}
+  .muted{{color:#8b90a0;font-size:13px}}
+  .foot{{color:#6b7180;font-size:11px;margin-top:16px;text-align:center;line-height:1.7}}
+</style>
+</head>
+<body>
+  <div class="head">
+    <div><h1>InvestRadar</h1><div class="sub">Hourly "is this a good price to add?" scores</div></div>
+    <div class="sub">{escape(run.stamp)}<br/>auto-refreshes every 30 min</div>
+  </div>
+
+  <div class="hero">
+    {_ring(p.overall, p.color, 120)}
+    <div class="htext">
+      <h2>Overall watchlist read</h2>
+      <div class="verdict" style="color:{p.color}">{escape(p.verdict)}</div>
+      {note}
+    </div>
+  </div>
+
+  <div class="grid">{cards}</div>
+
+  <section>
+    <h3>Suggested split of any new contribution</h3>
+    <div class="bars">{alloc_rows}</div>
+  </section>
+
+  <section>
+    <h3>Goal check - ${g.start_cash_usd:,.0f} &rarr; 1,000,000,000 IDR</h3>
+    <p class="muted">{escape(g.headline)}</p>
+    <table>
+      <tr><th>Horizon</th><th>Scenario</th><th>Return/yr</th><th>$4k grows to</th><th>Monthly needed</th></tr>
+      {goal_rows}
+    </table>
+  </section>
+
+  <div class="foot">
+    Educational tool - not financial advice. Data: Yahoo Finance.<br/>
+    Scores blend valuation (35%), dip/margin-of-safety (30%), trend (20%) and timing (15%).<br/>
+    Invest with a long horizon and a margin of safety.
+  </div>
+</body>
+</html>"""
