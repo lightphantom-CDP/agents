@@ -1,0 +1,5 @@
+flask>=3.0,<4
+requests>=2.31,<3
+ray[default]>=2.9,<3
+# PBJ/IPython needs pygments.formatters; pin <3 if user site-packages broke the kernel
+pygments>=2.15,<3
